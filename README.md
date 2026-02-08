@@ -65,6 +65,14 @@ It fits into the original housing of the BWO155 pump:
 
 Unique to this variant: an ADC input (GPIO1) reads the pump's internal NTC thermistor through a voltage divider (factor 0.45). This is a research feature for correlating the pump's built-in temperature sensor with the external DS18B20, potentially replacing it in the future.
 
+![BWO155 pump installed](pictures/hotcirc_red/esphome_hotcirc_assembled_IV.png)
+
+![Custom PCB installed in pump housing](pictures/hotcirc_red/esphome_hotcirc_assembled_II.png)
+
+| PCB Top | PCB Bottom |
+|---|---|
+| ![PCB top side with ESP32-C6](pictures/hotcirc_red/esphome_hotcirc_TOP.png) | ![PCB bottom side with USB-C PD](pictures/hotcirc_red/esphome_hotcirc_BOT.png) |
+
 ### M5StickC Plus2 (ESP32)
 
 Uses the M5StickC Plus2 form factor with a small 135x240 TFT display. The pump is controlled through a smart plug over HTTP rather than a direct relay, making it suitable for setups where the pump is physically distant from the controller.
@@ -78,6 +86,10 @@ The display shows:
 - Current trigger reason when pump is running
 
 The smart plug IP address is configurable through the web UI and persisted to flash.
+
+![M5StickC Plus2 with DS18B20 sensors](pictures/hotcirc_m5stickc-plus/hotcirc_m5stickc-plus_cables.png)
+
+![M5StickC Plus2 display close-up](pictures/hotcirc_m5stickc-plus/hotcirc_m5stickc-plus_closeup.png)
 
 ### UEDX4646 (ESP32-S3)
 
@@ -106,6 +118,8 @@ The most feature-rich variant, built around a 466x466 round display with capacit
 - Bottom: Smart plug IP and connection status
 
 The LCD module requires GPIO17 to be driven HIGH at boot to enable its power supply.
+
+![UEDX4646 round display close-up](pictures/hotcirc_uedx4646/esphome-hotcirc_ued4646_closeup.png)
 
 ---
 
@@ -195,6 +209,8 @@ Runs on Sunday at 03:00 when conditions are met. A 30-minute lockout after anti-
 ## Learning Matrix Heatmap
 
 The file `ESPHome_HotCirc_heatmap_ha_style.html` is a standalone web page that visualizes the learning matrix as an interactive heatmap. Open it in any browser - no server or installation required.
+
+![Learning matrix heatmap visualization](pictures/heatmap.png)
 
 ### Setup
 
@@ -290,6 +306,8 @@ Optional references:
 ### Web UI Controls
 
 All variants expose the following through the ESPHome web server (port 80):
+
+![Home Assistant integration](pictures/Homeassistant.png)
 
 **Sensors:**
 
