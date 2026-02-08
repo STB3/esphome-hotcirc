@@ -1,0 +1,923 @@
+esphome:
+  name: esphome-hotcirc-m5stickc-plus2
+  name_add_mac_suffix: false
+  comment: HotCirc hot water circulation controller
+  platformio_options:
+    board_build.arduino.memory_type: qio_opi
+  on_boot:
+    priority: 600  # Run early, before components initialize
+    then:
+      - lambda: |-
+          // Structure to store IP address in flash (must be trivially copyable)
+          struct IpAddressStorage {
+            char ip[16];  // Max 15 chars for IP + null terminator
+          };
+
+          // Load smart plug IP from flash preferences
+          auto pref = global_preferences->make_preference<IpAddressStorage>(fnv1_hash("plug_ip"));
+          IpAddressStorage stored_ip;
+
+          if (pref.load(&stored_ip)) {
+            id(smart_plug_ip) = std::string(stored_ip.ip);
+            ESP_LOGI("config", "Loaded smart plug IP from flash: %s", stored_ip.ip);
+          } else {
+            ESP_LOGI("config", "No saved IP found, using default: %s", id(smart_plug_ip).c_str());
+          }
+      - lambda: |-
+          if (!id(wifi_connected)) {
+            id(ap_mode_blink).execute();
+          }
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: !secret local_path
+    components: [esphome_hotcirc]
+
+logger:
+  level: INFO
+
+api:
+  reboot_timeout: 600min
+
+ota:
+  platform: esphome
+
+web_server:
+  version: 3
+  port: 80
+  include_internal: true     # exposes internal handlers
+
+wifi:
+# Uncomment this if you have entered your credentials in the secrets.yaml
+# anyway at least the api_encryption_key: section must be present in the secrets.yaml
+#  ssid: !secret wifi_ssid
+#  password: !secret wifi_password
+  power_save_mode: NONE
+  ap:
+    ssid: "ESPhome-HotCirc"
+  reboot_timeout: 0s
+
+  on_connect:
+    - script.stop: ap_mode_blink
+    - globals.set:
+        id: wifi_connected
+        value: 'true'
+
+  on_disconnect:
+    - script.execute: ap_mode_blink
+    - globals.set:
+        id: wifi_connected
+        value: 'false'
+
+captive_portal:
+
+# HTTP request component for smart plug control
+http_request:
+  id: http_client
+  timeout: 2s  # Reduced to prevent watchdog timeout
+
+# Global variable to store smart plug IP address (runtime only)
+globals:
+  - id: smart_plug_ip
+    type: std::string
+    restore_value: no  # We'll handle persistence manually
+    initial_value: '"192.168.1.100"'  # Default IP address
+  - id: wifi_connected
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: smart_plug_connected
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+# === Sensors & Temperature Probes ===
+one_wire:
+- platform: gpio
+  id: ow_bus
+  pin:
+    number: GPIO26
+    mode:
+      input: true
+      pullup: true
+
+sensor:
+  - platform: dallas_temp
+    one_wire_id: ow_bus
+    address: 0x84000000b40d1628
+    name: "Outlet Temperature"
+    id: outlet_temp
+    update_interval: 1s
+    accuracy_decimals: 2
+    filters:
+      - sliding_window_moving_average:  # Smooth out sensor noise
+          window_size: 3
+          send_every: 1
+
+  - platform: dallas_temp
+    one_wire_id: ow_bus
+    address: 0x67000000b3e53728
+    name: "Return Temperature"
+    id: return_temp
+    update_interval: 1s
+    accuracy_decimals: 2
+    filters:
+      - sliding_window_moving_average:
+          window_size: 3
+          send_every: 1
+
+  - platform: wifi_signal
+    name: "HotCirc WiFi Signal"
+    id: wifi_signal_sensor
+    update_interval: 60s
+
+  # Last pump cycle energy consumption
+  - platform: template
+    name: "Last Cycle Energy"
+    id: last_cycle_energy
+    update_interval: 5s
+    lambda: |-
+      return id(hotwater).get_last_cycle_energy();
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 4
+    device_class: energy
+    state_class: total_increasing
+    icon: "mdi:lightning-bolt"
+
+  # Last pump cycle duration
+  - platform: template
+    name: "Last Cycle Duration"
+    id: last_cycle_duration
+    update_interval: 5s
+    lambda: |-
+      return id(hotwater).get_last_cycle_duration();
+    unit_of_measurement: "s"
+    accuracy_decimals: 0
+    icon: "mdi:timer-outline"
+
+
+text_sensor:
+  - platform: template
+    name: "Pump Status"
+    id: pump_status
+    icon: "mdi:information-outline"
+    update_interval: 1s
+    lambda: |-
+      if (id(hotwater).pump_running_) {
+        // Get trigger reason
+        auto trigger = id(hotwater).get_pump_trigger();
+        std::string trigger_str;
+
+        switch(trigger) {
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::MANUAL_BUTTON:
+            trigger_str = "Manual Button";
+            break;
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::MANUAL_WEBUI:
+            trigger_str = "Web UI";
+            break;
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::WATER_DRAW:
+            trigger_str = "Water Draw";
+            break;
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::SCHEDULED:
+            trigger_str = "Scheduled";
+            break;
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::DISINFECTION:
+            trigger_str = "Disinfection";
+            break;
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::ANTI_STAGNATION:
+            trigger_str = "Anti-Stagnation";
+            break;
+          default:
+            trigger_str = "Unknown";
+        }
+
+        return std::string("Running: ") + trigger_str;
+      } else if (!id(hotwater).pump_enabled_) {
+        return std::string("Disabled");
+      } else {
+        return std::string("Standby");
+      }
+
+  - platform: template
+    name: "System Mode"
+    id: system_mode
+    icon: "mdi:home-automation"
+    update_interval: 10s
+    lambda: |-
+      if (id(hotwater).is_vacation_mode()) {
+        return {"Vacation Mode"};
+      } else {
+        return {"Normal"};
+      }
+
+  - platform: template
+    name: "Learning Matrix JSON"
+    id: learning_matrix_json
+    update_interval: 300s  # Update every 5 minutes for learning changes
+                           # Also updates immediately when ECO level changes (see ECO Level number component)
+    internal: false  # Make it accessible via web/API
+    lambda: |-
+      // Build JSON string from learning matrix including ECO level
+      std::string json = "{\"eco_level\":";
+      json += std::to_string((int)id(hotwater).SCHEDULE_THRESHOLD);
+      json += ",\"days\":[";
+
+      const char* dayNames[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+
+      for (int day = 0; day < 7; day++) {
+        if (day > 0) json += ",";
+        json += "{\"name\":\"" + std::string(dayNames[day]) + "\",\"values\":[";
+
+        for (int slot = 0; slot < 48; slot++) {
+          if (slot > 0) json += ",";
+          // Use std::to_string for proper conversion
+          json += std::to_string((int)id(hotwater).learn_[day][slot]);
+        }
+
+        json += "]}";
+      }
+
+      json += "]}";
+
+      return json;
+
+switch:
+  # Smart plug control via HTTP (replaces GPIO relay)
+  # IP address can be configured via "Smart Plug IP Address" text input
+  - platform: template
+    id: pump_relay
+    name: "Pump Relay (HTTP)"
+    restore_mode: ALWAYS_OFF  # Safety: ensure pump is off on boot
+    internal: true  # Hide from UI - controlled internally
+    turn_on_action:
+      - lambda: |-
+          std::string url = "http://" + id(smart_plug_ip) + "/switch/relay/turn_on";
+          ESP_LOGI("pump_relay", "Turning ON smart plug at: %s", url.c_str());
+      - http_request.get:
+          url: !lambda |-
+            return "http://" + id(smart_plug_ip) + "/switch/relay/turn_on";
+          on_error:
+            - logger.log:
+                format: "HTTP Error: Failed to turn ON smart plug"
+                level: ERROR
+    turn_off_action:
+      - lambda: |-
+          std::string url = "http://" + id(smart_plug_ip) + "/switch/relay/turn_off";
+          ESP_LOGI("pump_relay", "Turning OFF smart plug at: %s", url.c_str());
+      - http_request.get:
+          url: !lambda |-
+            return "http://" + id(smart_plug_ip) + "/switch/relay/turn_off";
+          on_error:
+            - logger.log:
+                format: "HTTP Error: Failed to turn OFF smart plug"
+                level: ERROR
+    lambda: |-
+      // Return current state (track internally since we can't query the plug)
+      // The hotcirc component will manage the state
+      return {};
+    optimistic: true  # Assume state changes succeed
+
+  # Master enable/disable switch for pump operation
+  - platform: template
+    name: "Circulation Pump Enable"
+    id: pump_enable_switch
+    icon: "mdi:pump"
+    restore_mode: RESTORE_DEFAULT_ON  # Default to enabled on boot
+    optimistic: true
+    lambda: |-
+      return id(hotwater).pump_enabled_;
+    turn_on_action:
+      - lambda: |-
+          ESP_LOGI("pump_switch", "Pump ENABLED via Web UI");
+          id(hotwater).enable_pump();
+    turn_off_action:
+      - lambda: |-
+          ESP_LOGI("pump_switch", "Pump DISABLED via Web UI");
+          id(hotwater).disable_pump();
+
+button:
+  - platform: template
+    name: "Run Circulation Pump"
+    icon: "mdi:pump"
+    on_press:
+      - lambda: |-
+          ESP_LOGI("pump_button", "Web UI: Pump run requested");
+          id(hotwater).run_pump();
+
+  - platform: template
+    name: "Save Learning Matrix"
+    icon: "mdi:content-save"
+    on_press:
+      - lambda: |-
+          ESP_LOGI("save_button", "Web UI: Save learning matrix requested");
+          id(hotwater).save_learning_matrix();
+
+  - platform: template
+    name: "Test Smart Plug Connection"
+    icon: "mdi:lan-connect"
+    on_press:
+      - script.execute: test_smart_plug_script
+
+text:
+  - platform: template
+    name: "Smart Plug IP Address"
+    id: smart_plug_ip_input
+    icon: "mdi:ip-network"
+    min_length: 7
+    max_length: 15
+    mode: text
+    lambda: |-
+      // Return current value from global variable
+      return id(smart_plug_ip);
+    set_action:
+      - lambda: |-
+          id(smart_plug_ip) = x;
+
+          // Structure to store IP address in flash (must be trivially copyable)
+          struct IpAddressStorage {
+            char ip[16];  // Max 15 chars for IP + null terminator
+          };
+
+          // Save to flash using preferences
+          auto pref = global_preferences->make_preference<IpAddressStorage>(fnv1_hash("plug_ip"));
+          IpAddressStorage stored_ip;
+          strncpy(stored_ip.ip, x.c_str(), sizeof(stored_ip.ip) - 1);
+          stored_ip.ip[sizeof(stored_ip.ip) - 1] = '\0';  // Ensure null termination
+
+          if (pref.save(&stored_ip)) {
+          ESP_LOGI("config", "Smart plug IP address changed to: %s (saved to flash)", x.c_str());
+          } else {
+            ESP_LOGE("config", "Failed to save smart plug IP to flash!");
+          }
+    entity_category: config
+
+number:
+  - platform: template
+    name: "Outlet Rise Threshold"
+    id: outlet_rise_config
+    icon: "mdi:thermometer-chevron-up"
+    min_value: 0.5
+    max_value: 3.0
+    step: 0.1
+    initial_value: 1.0
+    optimistic: true
+    unit_of_measurement: "°C"
+    mode: slider
+    on_value:
+      - lambda: |-
+          id(hotwater).temp_rise_threshold_ = x;
+          ESP_LOGI("config", "Outlet rise threshold changed to %.1f°C", x);
+
+  - platform: template
+    name: "Return Rise Target"
+    id: return_rise_config
+    icon: "mdi:thermometer-alert"
+    min_value: 3.0
+    max_value: 15.0
+    step: 0.5
+    initial_value: 5.0
+    optimistic: true
+    unit_of_measurement: "°C"
+    mode: slider
+    on_value:
+      - lambda: |-
+          id(hotwater).return_rise_threshold_ = x;
+          ESP_LOGI("config", "Return rise target changed to %.1f°C", x);
+
+  - platform: template
+    name: "Min Return Temperature"
+    id: min_return_temp_config
+    icon: "mdi:thermometer-low"
+    min_value: 25.0
+    max_value: 40.0
+    step: 1.0
+    initial_value: 30.0
+    optimistic: true
+    unit_of_measurement: "°C"
+    mode: slider
+    on_value:
+      - lambda: |-
+          id(hotwater).min_return_temp_ = x;
+          ESP_LOGI("config", "Min return temperature changed to %.1f°C", x);
+
+  - platform: template
+    name: "Disinfection Temp Rise"
+    id: disinfection_temp_rise_config
+    icon: "mdi:biohazard"
+    min_value: 5.0
+    max_value: 20.0
+    step: 1.0
+    initial_value: 10.0
+    optimistic: true
+    unit_of_measurement: "°C"
+    mode: slider
+    on_value:
+      - lambda: |-
+          id(hotwater).disinfection_temp_threshold_ = x;
+          ESP_LOGI("config", "Disinfection temp rise changed to %.1f°C", x);
+
+  - platform: template
+    name: "Pump Flow Rate"
+    id: pump_flow_rate_config
+    icon: "mdi:waves-arrow-right"
+    min_value: 5.0
+    max_value: 40.0
+    step: 1.0
+    initial_value: 20.0
+    optimistic: true
+    unit_of_measurement: "L/min"
+    mode: box
+    on_value:
+      - lambda: |-
+          id(hotwater).pump_flow_rate_ = x;
+          ESP_LOGI("config", "Pump flow rate changed to %.1f L/min", x);
+
+  - platform: template
+    name: "ECO Level"
+    id: eco_level_config
+    icon: "mdi:leaf"
+    min_value: 0
+    max_value: 255
+    step: 5
+    initial_value: 120
+    optimistic: true
+    mode: slider
+    on_value:
+      - lambda: |-
+          // ECO level: higher value = more eco-friendly = pump runs less often
+          // Value directly matches learning matrix values shown in heatmap
+          // Range 0-255: 0 = always run, 255 = only run when absolutely certain
+          id(hotwater).SCHEDULE_THRESHOLD = (uint8_t)x;
+          ESP_LOGI("config", "ECO level changed to %.0f (threshold = %d)", x, (uint8_t)x);
+          // Immediately update the JSON sensor so heatmap shows new trigger thresholds
+          id(learning_matrix_json).update();
+
+# Backlight control for M5StickC Plus2
+output:
+  - platform: ledc
+    pin: GPIO27
+    id: backlight_pwm
+    frequency: 1000Hz
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Display Backlight"
+    id: display_backlight
+    restore_mode: ALWAYS_ON
+    default_transition_length: 0s
+
+# SPI for display
+spi:
+  clk_pin: GPIO13
+  mosi_pin: GPIO15
+
+# Fonts for display
+font:
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 12
+  - file: "gfonts://Roboto"
+    id: font_medium
+    size: 16
+  - file: "gfonts://Roboto"
+    id: font_large
+    size: 20
+  - file: "gfonts://Roboto"
+    id: font_temp
+    size: 28
+
+color:
+  - id: color_white
+    red: 100%
+    green: 100%
+    blue: 100%
+  - id: color_black
+    red: 0%
+    green: 0%
+    blue: 0%
+  - id: color_red
+    red: 100%
+    green: 0%
+    blue: 0%
+  - id: color_green
+    red: 0%
+    green: 100%
+    blue: 0%
+  - id: color_yellow
+    red: 100%
+    green: 100%
+    blue: 0%
+  - id: color_blue
+    red: 0%
+    green: 50%
+    blue: 100%
+  - id: color_gray
+    red: 50%
+    green: 50%
+    blue: 50%
+  - id: color_orange
+    red: 100%
+    green: 65%
+    blue: 0%
+
+# 1.14 inch, 135x240 Colorful TFT LCD, ST7789v2
+display:
+  - platform: st7789v
+    model: TTGO TDisplay 135x240
+    id: tft_display
+    cs_pin: GPIO5
+    dc_pin: GPIO14
+    reset_pin: GPIO12
+    rotation: 90
+    update_interval: 2s
+    lambda: |-
+      // Safety check: ensure display is ready
+      if (!id(outlet_temp).has_state() && !id(return_temp).has_state()) {
+        // Display not ready yet, show loading screen
+        it.print(120, 68, id(font_medium), id(color_white), TextAlign::CENTER, "Initializing...");
+        return;
+      }
+
+      // Clear screen with black background
+      it.fill(id(color_black));
+
+      // Get current status
+      bool pump_running = id(hotwater).pump_running_;
+      bool pump_enabled = id(hotwater).pump_enabled_;
+      bool wifi_conn = id(wifi_connected);
+
+      // === Top Status Bar (0-20px) ===
+      // WiFi Status Icon (top left) - standard WiFi symbol with arcs
+      int wifi_x = 18;
+      int wifi_y = 18;
+      if (wifi_conn) {
+        // Get WiFi signal strength (RSSI)
+        float rssi = id(wifi_signal_sensor).state;
+        int num_arcs = 3;  // Default to full signal
+
+        // Determine number of arcs based on RSSI
+        // RSSI ranges: > -60 dBm = excellent (3 arcs)
+        //              -60 to -70 dBm = good (2 arcs)
+        //              -70 to -80 dBm = fair (1 arc)
+        //              < -80 dBm = poor (1 arc)
+        if (!isnan(rssi)) {
+          if (rssi < -70) {
+            num_arcs = 1;  // Poor/fair signal
+          } else if (rssi < -60) {
+            num_arcs = 2;  // Good signal
+          } else {
+            num_arcs = 3;  // Excellent signal
+          }
+        }
+
+        // Draw WiFi connected icon with arc segments (green)
+        it.filled_circle(wifi_x, wifi_y, 2, id(color_green));  // Center dot
+
+        // Small arc (innermost) - always shown
+        if (num_arcs >= 1) {
+          for (int angle = 200; angle <= 340; angle += 10) {
+            float rad1 = angle * 3.14159 / 180.0;
+            float rad2 = (angle + 10) * 3.14159 / 180.0;
+            int x1 = wifi_x + 5 * cos(rad1);
+            int y1 = wifi_y + 5 * sin(rad1);
+            int x2 = wifi_x + 5 * cos(rad2);
+            int y2 = wifi_y + 5 * sin(rad2);
+            it.line(x1, y1, x2, y2, id(color_green));
+          }
+        }
+
+        // Medium arc - shown for good signal
+        if (num_arcs >= 2) {
+          for (int angle = 210; angle <= 330; angle += 10) {
+            float rad1 = angle * 3.14159 / 180.0;
+            float rad2 = (angle + 10) * 3.14159 / 180.0;
+            int x1 = wifi_x + 9 * cos(rad1);
+            int y1 = wifi_y + 9 * sin(rad1);
+            int x2 = wifi_x + 9 * cos(rad2);
+            int y2 = wifi_y + 9 * sin(rad2);
+            it.line(x1, y1, x2, y2, id(color_green));
+          }
+        }
+
+        // Large arc (outermost) - shown for excellent signal
+        if (num_arcs >= 3) {
+          for (int angle = 220; angle <= 320; angle += 10) {
+            float rad1 = angle * 3.14159 / 180.0;
+            float rad2 = (angle + 10) * 3.14159 / 180.0;
+            int x1 = wifi_x + 13 * cos(rad1);
+            int y1 = wifi_y + 13 * sin(rad1);
+            int x2 = wifi_x + 13 * cos(rad2);
+            int y2 = wifi_y + 13 * sin(rad2);
+            it.line(x1, y1, x2, y2, id(color_green));
+          }
+        }
+      } else {
+        // Draw WiFi disconnected icon (red) - WiFi symbol with strikethrough
+        it.filled_circle(wifi_x, wifi_y, 2, id(color_red));  // Center dot
+
+        // Small arc
+        for (int angle = 200; angle <= 340; angle += 10) {
+          float rad1 = angle * 3.14159 / 180.0;
+          float rad2 = (angle + 10) * 3.14159 / 180.0;
+          int x1 = wifi_x + 5 * cos(rad1);
+          int y1 = wifi_y + 5 * sin(rad1);
+          int x2 = wifi_x + 5 * cos(rad2);
+          int y2 = wifi_y + 5 * sin(rad2);
+          it.line(x1, y1, x2, y2, id(color_red));
+        }
+
+        // Medium arc
+        for (int angle = 210; angle <= 330; angle += 10) {
+          float rad1 = angle * 3.14159 / 180.0;
+          float rad2 = (angle + 10) * 3.14159 / 180.0;
+          int x1 = wifi_x + 9 * cos(rad1);
+          int y1 = wifi_y + 9 * sin(rad1);
+          int x2 = wifi_x + 9 * cos(rad2);
+          int y2 = wifi_y + 9 * sin(rad2);
+          it.line(x1, y1, x2, y2, id(color_red));
+        }
+
+        // Large arc
+        for (int angle = 220; angle <= 320; angle += 10) {
+          float rad1 = angle * 3.14159 / 180.0;
+          float rad2 = (angle + 10) * 3.14159 / 180.0;
+          int x1 = wifi_x + 13 * cos(rad1);
+          int y1 = wifi_y + 13 * sin(rad1);
+          int x2 = wifi_x + 13 * cos(rad2);
+          int y2 = wifi_y + 13 * sin(rad2);
+          it.line(x1, y1, x2, y2, id(color_red));
+        }
+
+        // Diagonal strikethrough line (left-bottom to right-top)
+        it.line(wifi_x - 10, wifi_y + 10, wifi_x + 10, wifi_y - 10, id(color_red));
+        it.line(wifi_x - 9, wifi_y + 10, wifi_x + 11, wifi_y - 10, id(color_red));  // Make it thicker
+
+        // AP text to indicate Access Point mode
+        it.print(wifi_x + 14, wifi_y - 6, id(font_small), id(color_red), "AP");
+      }
+
+      // Pump Enable Status (top center)
+      if (!pump_enabled) {
+        it.print(120, 5, id(font_small), id(color_red), TextAlign::TOP_CENTER, "DISABLED");
+      } else if (pump_running) {
+        it.print(120, 5, id(font_small), id(color_green), TextAlign::TOP_CENTER, "RUNNING");
+      } else {
+        it.print(120, 5, id(font_small), id(color_blue), TextAlign::TOP_CENTER, "STANDBY");
+      }
+
+      // Pump icon (top right) - circular pump with impeller
+      int pump_x = 220;
+      int pump_y = 12;
+      if (pump_running) {
+        // Draw pump symbol (green) - circle with impeller blades
+        it.circle(pump_x, pump_y, 8, id(color_green));  // Outer housing
+        it.filled_circle(pump_x, pump_y, 2, id(color_green));  // Center hub
+
+        // Draw 6 impeller blades radiating from center
+        for (int i = 0; i < 6; i++) {
+          float angle = i * 60 * 3.14159 / 180.0;
+          int x1 = pump_x + 2 * cos(angle);
+          int y1 = pump_y + 2 * sin(angle);
+          int x2 = pump_x + 6 * cos(angle);
+          int y2 = pump_y + 6 * sin(angle);
+          it.line(x1, y1, x2, y2, id(color_green));
+          // Make blades thicker by drawing parallel line
+          it.line(x1 + 1, y1, x2 + 1, y2, id(color_green));
+        }
+
+        // Flow lines (inlet and outlet)
+        it.line(pump_x - 13, pump_y - 3, pump_x - 9, pump_y - 3, id(color_green));  // Inlet top
+        it.line(pump_x - 13, pump_y + 3, pump_x - 9, pump_y + 3, id(color_green));  // Inlet bottom
+        it.line(pump_x + 9, pump_y, pump_x + 13, pump_y, id(color_green));  // Outlet
+      } else {
+        // Draw pump symbol (gray) - same design but gray
+        it.circle(pump_x, pump_y, 8, id(color_gray));
+        it.filled_circle(pump_x, pump_y, 2, id(color_gray));
+
+        // Draw 6 impeller blades
+        for (int i = 0; i < 6; i++) {
+          float angle = i * 60 * 3.14159 / 180.0;
+          int x1 = pump_x + 2 * cos(angle);
+          int y1 = pump_y + 2 * sin(angle);
+          int x2 = pump_x + 6 * cos(angle);
+          int y2 = pump_y + 6 * sin(angle);
+          it.line(x1, y1, x2, y2, id(color_gray));
+          it.line(x1 + 1, y1, x2 + 1, y2, id(color_gray));
+        }
+
+        // Flow lines
+        it.line(pump_x - 13, pump_y - 3, pump_x - 9, pump_y - 3, id(color_gray));
+        it.line(pump_x - 13, pump_y + 3, pump_x - 9, pump_y + 3, id(color_gray));
+        it.line(pump_x + 9, pump_y, pump_x + 13, pump_y, id(color_gray));
+      }
+
+      // === Temperature Display Section (25-90px) ===
+      // Outlet Temperature
+      it.print(10, 30, id(font_medium), id(color_white), "Outlet:");
+      if (!isnan(id(outlet_temp).state)) {
+        char temp_str[10];
+        snprintf(temp_str, sizeof(temp_str), "%.2f°C", id(outlet_temp).state);
+        it.print(120, 25, id(font_temp), id(color_orange), temp_str);
+      } else {
+        it.print(120, 25, id(font_temp), id(color_gray), "-.--°C");
+      }
+
+      // Return Temperature
+      it.print(10, 60, id(font_medium), id(color_white), "Return:");
+      if (!isnan(id(return_temp).state)) {
+        char temp_str[10];
+        snprintf(temp_str, sizeof(temp_str), "%.2f°C", id(return_temp).state);
+        it.print(120, 55, id(font_temp), id(color_blue), temp_str);
+      } else {
+        it.print(120, 55, id(font_temp), id(color_gray), "-.--°C");
+      }
+
+      // === Status Information Section (95-135px) ===
+      // Smart Plug IP Address (bottom left)
+      bool plug_connected = id(smart_plug_connected);
+      Color plug_color = plug_connected ? id(color_green) : id(color_red);
+      std::string plug_ip = id(smart_plug_ip).c_str();
+
+      it.print(10, 115, id(font_small), id(color_white), "Plug:");
+      it.print(45, 115, id(font_small), plug_color, plug_ip.c_str());
+
+      // Draw strikethrough if not connected
+      if (!plug_connected) {
+        int text_width = plug_ip.length() * 6;  // Approximate width
+        it.line(45, 120, 45 + text_width, 120, id(color_red));
+      }
+
+      // Pump Status Text (moved to right side)
+      std::string status_text = "";
+      Color status_color = id(color_white);
+
+      if (pump_running) {
+        auto trigger = id(hotwater).get_pump_trigger();
+
+        switch(trigger) {
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::MANUAL_BUTTON:
+            status_text = "Manual Button";
+            status_color = id(color_yellow);
+            break;
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::MANUAL_WEBUI:
+            status_text = "Web UI";
+            status_color = id(color_yellow);
+            break;
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::WATER_DRAW:
+            status_text = "Water Draw";
+            status_color = id(color_green);
+            break;
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::SCHEDULED:
+            status_text = "Scheduled";
+            status_color = id(color_blue);
+            break;
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::DISINFECTION:
+            status_text = "Disinfection";
+            status_color = id(color_orange);
+            break;
+          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::ANTI_STAGNATION:
+            status_text = "Anti-Stagnation";
+            status_color = id(color_orange);
+            break;
+          default:
+            status_text = "Running";
+            status_color = id(color_white);
+        }
+      } else if (!pump_enabled) {
+        status_text = "System Disabled";
+        status_color = id(color_red);
+      } else {
+        status_text = "Ready";
+        status_color = id(color_green);
+      }
+
+      it.print(170, 100, id(font_medium), status_color, TextAlign::TOP_CENTER, status_text.c_str());
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO37
+      inverted: true
+    id: hw_button
+    name: "Manual Pump Button"
+    filters:
+      - delayed_on: 50ms  # Debounce
+    internal: true
+    on_press:
+      - lambda: |-
+          ESP_LOGI("button", "Hardware button pressed - requesting pump run");
+          id(hotwater).run_pump();
+
+  # Smart plug connectivity status
+  - platform: template
+    name: "Smart Plug Connected"
+    id: smart_plug_status
+    icon: "mdi:lan-connect"
+    device_class: connectivity
+    lambda: |-
+      return id(smart_plug_connected);
+
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Amsterdam
+    servers: ["0.nl.pool.ntp.org", "1.nl.pool.ntp.org", "2.nl.pool.ntp.org"]
+    on_time_sync:
+      - logger.log: "Time synchronized"
+
+# Check smart plug connectivity every 60 seconds
+interval:
+  - interval: 60s
+    then:
+      - script.execute: check_smart_plug_script
+
+script:
+  - id: ap_mode_blink
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: 'return !id(wifi_connected);'
+          then:
+            - delay: 1000ms
+
+  - id: test_smart_plug_script
+    mode: single
+    then:
+      - logger.log:
+          format: "Testing smart plug connection at: %s"
+          args: [ 'id(smart_plug_ip).c_str()' ]
+          level: INFO
+          tag: "smart_plug"
+      - delay: 100ms  # Allow watchdog to be fed
+      - http_request.get:
+          url: !lambda 'return "http://" + id(smart_plug_ip) + "/sensor/status";'
+          on_response:
+            then:
+              - lambda: |-
+                  ESP_LOGI("smart_plug", "SUCCESS! Smart plug is reachable");
+                  id(smart_plug_connected) = true;
+                  id(smart_plug_status).publish_state(true);
+          on_error:
+            then:
+              - lambda: |-
+                  ESP_LOGE("smart_plug", "FAILED! Smart plug is not reachable");
+                  id(smart_plug_connected) = false;
+                  id(smart_plug_status).publish_state(false);
+
+  - id: check_smart_plug_script
+    mode: single
+    then:
+      - http_request.get:
+          url: !lambda 'return "http://" + id(smart_plug_ip) + "/sensor/status";'
+          on_response:
+            then:
+              - lambda: |-
+                    if (!id(smart_plug_connected)) {
+                      ESP_LOGI("smart_plug", "Smart plug is now ONLINE");
+                    }
+                    id(smart_plug_connected) = true;
+                    id(smart_plug_status).publish_state(true);
+          on_error:
+            then:
+              - lambda: |-
+                  if (id(smart_plug_connected)) {
+                    ESP_LOGW("smart_plug", "Smart plug is now OFFLINE");
+                  }
+                  id(smart_plug_connected) = false;
+                  id(smart_plug_status).publish_state(false);
+
+
+# === Instantiate HotCirc Component ===
+esphome_hotcirc:
+  id: hotwater
+  outlet_sensor: outlet_temp
+  return_sensor: return_temp
+  pump_switch: pump_relay
+  time_source: sntp_time
+  button: hw_button
+  # Note: led_green and led_yellow removed - M5StickC Plus2 uses TFT display instead
+  outlet_rise: 1.0      # Minimum temperature RISE to detect water draw (°C)
+                        # Reduced from 1.5 to match slower temperature response in 40cm pipe
+  return_rise: 5.0      # Target return temperature rise for normal operation (°C)
+  disinfection_temp_rise: 10.0  # Temperature rise above baseline indicating disinfection cycle (°C)
+                                # When detected, pump runs maximum time to disinfect entire system
+  min_return_temp: 30.0  # Minimum return temperature to start pump (°C)
+                         # If return temp is above this, water at taps is already hot enough
+                         # Prevents unnecessary pump runs, saves energy
+  pump_flow_rate: 20.0   # Pump flow rate in liters per minute (L/min)
+                         # Measured value: 20 L/min
+                         # Used for energy consumption calculation
+  anti_stagnation_interval: 172800  # Anti-stagnation interval in seconds (default: 48 hours)
+                                    # Pump runs for short duration when disabled or in vacation mode
+                                    # to prevent impeller seizure
+  anti_stagnation_runtime: 15       # Anti-stagnation run time in seconds (default: 15 seconds)
+                                    # Short run is enough to move impeller and prevent seizure

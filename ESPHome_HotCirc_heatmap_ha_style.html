@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESPHome HotCirc - Learning Matrix</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            /* Dark theme (default) */
+            --bg-primary: #0d1117;
+            --bg-card: #1c1c1c;
+            --bg-secondary: #2c2c2c;
+            --bg-tertiary: #3c3c3c;
+            --text-primary: #e1e1e1;
+            --text-secondary: #9e9e9e;
+            --text-tertiary: #616161;
+            --border-color: #3c3c3c;
+            --border-light: #4c4c4c;
+            --accent-color: #03a9f4;
+            --accent-hover: #0288d1;
+            --shadow-color: rgba(0, 0, 0, 0.3);
+            --shadow-strong: rgba(0, 0, 0, 0.5);
+            
+            /* Status colors */
+            --color-success: #4caf50;
+            --color-warning: #ff9800;
+            --color-error: #f44336;
+            --color-info: #2196f3;
+            
+            /* Heatmap colors */
+            --heat-none: #2c2c2c;
+            --heat-low: #2196f3;
+            --heat-medium: #4caf50;
+            --heat-high: #ff9800;
+            --heat-peak: #f44336;
+        }
+        
+        [data-theme="light"] {
+            /* Light theme */
+            --bg-primary: #fafafa;
+            --bg-card: #ffffff;
+            --bg-secondary: #f5f5f5;
+            --bg-tertiary: #e0e0e0;
+            --text-primary: #212121;
+            --text-secondary: #757575;
+            --text-tertiary: #9e9e9e;
+            --border-color: #e0e0e0;
+            --border-light: #bdbdbd;
+            --accent-color: #03a9f4;
+            --accent-hover: #0288d1;
+            --shadow-color: rgba(0, 0, 0, 0.1);
+            --shadow-strong: rgba(0, 0, 0, 0.2);
+            
+            /* Heatmap colors - lighter variants */
+            --heat-none: #f5f5f5;
+            --heat-low: #64b5f6;
+            --heat-medium: #66bb6a;
+            --heat-high: #ffa726;
+            --heat-peak: #ef5350;
+        }
+        
+        body {
+            font-family: 'Roboto', 'Noto', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            padding: 16px;
+            min-height: 100vh;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        
+        .ha-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            box-shadow: 0 2px 8px var(--shadow-color);
+            margin-bottom: 16px;
+            overflow: hidden;
+            transition: background-color 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .card-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--bg-secondary);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .card-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .card-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #03a9f4 0%, #0288d1 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        
+        h1 {
+            font-size: 20px;
+            font-weight: 500;
+            color: var(--text-primary);
+            letter-spacing: 0.1px;
+        }
+        
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 400;
+        }
+        
+        .card-content {
+            padding: 16px;
+        }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .control-label {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .ha-input {
+            padding: 12px 14px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+            transition: all 0.2s ease;
+        }
+        
+        .ha-input:focus {
+            outline: none;
+            border-color: var(--accent-color);
+            background: var(--bg-tertiary);
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        
+        .ha-button {
+            padding: 10px 20px;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 14px;
+            font-family: inherit;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .ha-button:hover {
+            background: var(--accent-hover);
+        }
+        
+        .ha-button:active {
+            transform: scale(0.98);
+        }
+        
+        .ha-button.secondary {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+        
+        .ha-button.secondary:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--border-light);
+        }
+        
+        .status-chips {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        
+        .status-chip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-tertiary);
+        }
+        
+        .status-dot.connected {
+            background: var(--color-success);
+            box-shadow: 0 0 8px rgba(76, 175, 80, 0.5);
+            animation: pulse-ha 2s infinite;
+        }
+        
+        .status-dot.error {
+            background: var(--color-error);
+        }
+        
+        @keyframes pulse-ha {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        
+        .heatmap-container {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 12px;
+            overflow-x: auto;
+        }
+        
+        .heatmap {
+            display: grid;
+            grid-template-columns: 70px repeat(48, minmax(16px, 1fr));
+            gap: 1px;
+            min-width: 900px;
+            max-width: 100%;
+        }
+        
+        .day-label {
+            font-weight: 500;
+            padding: 6px 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 11px;
+            color: var(--text-primary);
+        }
+        
+        .time-header {
+            font-size: 8px;
+            color: var(--text-secondary);
+            text-align: center;
+            padding: 4px 1px;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            font-weight: 500;
+        }
+        
+        .cell {
+            aspect-ratio: 1;
+            border-radius: 2px;
+            transition: all 0.15s ease;
+            cursor: pointer;
+            position: relative;
+            border: 0.5px solid rgba(0, 0, 0, 0.1);
+            min-height: 16px;
+        }
+        
+        .cell:hover {
+            transform: scale(1.5);
+            z-index: 10;
+            box-shadow: 0 4px 12px var(--shadow-strong);
+            border-color: var(--accent-color);
+            border-width: 1px;
+        }
+        
+        .cell.triggers-pump {
+            border: 2px solid #ffeb3b;
+            box-shadow: 0 0 6px rgba(255, 235, 59, 0.3);
+        }
+        
+        .cell.triggers-pump::before {
+            content: '⚡';
+            position: absolute;
+            top: 0px;
+            right: 0px;
+            font-size: 8px;
+            opacity: 0.9;
+            text-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+            z-index: 1;
+        }
+        
+        .cell::after {
+            content: attr(data-value);
+            position: absolute;
+            bottom: 110%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s;
+            z-index: 100;
+            box-shadow: 0 4px 12px var(--shadow-strong);
+        }
+        
+        .cell:hover::after {
+            opacity: 1;
+        }
+        
+        .legend-section {
+            margin-top: 16px;
+            padding: 16px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        
+        .legend-label {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .legend-gradient {
+            width: 250px;
+            height: 18px;
+            background: linear-gradient(to right, 
+                var(--heat-none) 0%, 
+                var(--heat-low) 25%, 
+                var(--heat-medium) 50%, 
+                var(--heat-high) 75%, 
+                var(--heat-peak) 100%);
+            border-radius: 9px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .legend-labels {
+            display: flex;
+            justify-content: space-between;
+            width: 250px;
+            margin-top: 4px;
+            font-size: 10px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            margin-top: 16px;
+        }
+        
+        .stat-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            padding: 16px;
+            border-radius: 8px;
+            text-align: center;
+            transition: all 0.2s ease;
+        }
+        
+        .stat-card:hover {
+            border-color: var(--accent-color);
+            box-shadow: 0 2px 8px rgba(3, 169, 244, 0.2);
+        }
+        
+        .stat-value {
+            font-size: 28px;
+            font-weight: 500;
+            color: var(--accent-color);
+            margin-bottom: 6px;
+        }
+        
+        .stat-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 500;
+        }
+        
+        .divider {
+            height: 1px;
+            background: var(--bg-secondary);
+            margin: 16px 0;
+        }
+        
+        .error-banner {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            border-left: 4px solid var(--color-error);
+            padding: 16px;
+            border-radius: 8px;
+            color: var(--color-error);
+            margin-bottom: 16px;
+            display: none;
+            font-size: 14px;
+        }
+        
+        .loading-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+        
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--bg-secondary);
+            border-top-color: var(--accent-color);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Toggle Switch - HA Style */
+        .ha-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+        
+        .ha-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .switch-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--bg-tertiary);
+            transition: .3s;
+            border-radius: 12px;
+        }
+        
+        .switch-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: var(--text-secondary);
+            transition: .3s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .switch-slider {
+            background-color: var(--accent-color);
+        }
+        
+        input:checked + .switch-slider:before {
+            transform: translateX(20px);
+            background-color: white;
+        }
+        
+        /* Custom Scrollbar - HA Style */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-light);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-tertiary);
+        }
+        
+        /* Theme Toggle Button */
+        .theme-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .theme-toggle:hover {
+            background: var(--bg-tertiary);
+        }
+        
+        .theme-icon {
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header Card -->
+        <div class="ha-card">
+            <div class="card-header">
+                <div class="card-title">
+                    <div class="card-icon">⚡</div>
+                    <div>
+                        <h1>ESPHome HotCirc Learning Matrix</h1>
+                        <div class="subtitle">Hot Water Circulation Controller</div>
+                    </div>
+                </div>
+                <div class="theme-toggle" onclick="toggleTheme()">
+                    <span class="theme-icon" id="themeIcon">🌙</span>
+                    <span id="themeText">Dark</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Controls Card -->
+        <div class="ha-card">
+            <div class="card-header">
+                <h1>Configuration</h1>
+            </div>
+            <div class="card-content">
+                <div class="controls">
+                    <div class="control-group">
+                        <label class="control-label">ESP32 IP Address</label>
+                        <input type="text" class="ha-input" id="espIP" placeholder="192.168.1.100" value="192.168.1.100">
+                    </div>
+                    
+                    <div class="control-group">
+                        <label class="control-label">Actions</label>
+                        <div class="button-group">
+                            <button class="ha-button" onclick="fetchData()">
+                                <span>↻</span> Refresh Data
+                            </button>
+                            <button class="ha-button secondary" onclick="toggleAutoRefresh()">
+                                <label class="ha-switch">
+                                    <input type="checkbox" id="autoRefreshToggle">
+                                    <span class="switch-slider"></span>
+                                </label>
+                                <span>Auto-refresh</span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label class="control-label">Status</label>
+                        <div class="status-chips">
+                            <div class="status-chip">
+                                <div class="status-dot" id="statusIndicator"></div>
+                                <span id="statusText">Disconnected</span>
+                            </div>
+                            <div class="status-chip">
+                                <span id="lastUpdate">⏱ Never</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Error Banner -->
+        <div class="error-banner" id="errorMessage"></div>
+        
+        <!-- Main Content Card -->
+        <div class="ha-card">
+            <div class="card-header">
+                <h1>Learning Matrix Visualization</h1>
+            </div>
+            <div class="card-content">
+                <div id="content">
+                    <div class="loading-state">
+                        <div class="loading-spinner"></div>
+                        <p>Enter ESP32 IP address and click Refresh Data to load the learning matrix</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval = null;
+        let currentData = null;
+        let currentEcoLevel = 120; // Default ECO level
+
+        const times = [];
+        for (let h = 0; h < 24; h++) {
+            times.push(`${h.toString().padStart(2, '0')}:00`);
+            times.push(`${h.toString().padStart(2, '0')}:30`);
+        }
+
+        function getColor(value) {
+            const root = document.documentElement;
+            const style = getComputedStyle(root);
+            
+            if (value === 0) return style.getPropertyValue('--heat-none').trim();
+            if (value < 50) return style.getPropertyValue('--heat-low').trim();
+            if (value < 100) return style.getPropertyValue('--heat-medium').trim();
+            if (value < 150) return style.getPropertyValue('--heat-high').trim();
+            return style.getPropertyValue('--heat-peak').trim();
+        }
+
+        function setStatus(status, message) {
+            const indicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+            
+            indicator.className = 'status-dot';
+            if (status === 'connected') {
+                indicator.classList.add('connected');
+            } else if (status === 'error') {
+                indicator.classList.add('error');
+            }
+            
+            statusText.textContent = message;
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = '⚠ ' + message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        async function fetchData() {
+            const ip = document.getElementById('espIP').value;
+            if (!ip) {
+                showError('Please enter ESP32 IP address');
+                return;
+            }
+
+            setStatus('connecting', 'Connecting...');
+
+            try {
+                const response = await fetch(`http://${ip}/text_sensor/learning_matrix_json`, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                let parsedData;
+                if (typeof data.value === 'string') {
+                    parsedData = JSON.parse(data.value);
+                } else if (data.days) {
+                    parsedData = data;
+                } else {
+                    throw new Error('Invalid data format');
+                }
+
+                // Extract ECO level if present
+                if (parsedData.eco_level !== undefined) {
+                    currentEcoLevel = parsedData.eco_level;
+                }
+
+                currentData = parsedData;
+                renderHeatmap(parsedData);
+                
+                setStatus('connected', 'Connected');
+                document.getElementById('lastUpdate').textContent = 
+                    `⏱ ${new Date().toLocaleTimeString()}`;
+
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                setStatus('error', 'Connection failed');
+                showError(`Failed to connect to ESP32: ${error.message}`);
+            }
+        }
+
+        function renderHeatmap(data) {
+            const content = document.getElementById('content');
+            
+            const html = `
+                <div class="heatmap-container">
+                    <div class="heatmap" id="heatmap"></div>
+                </div>
+                
+                <div class="legend-section">
+                    <span class="legend-label">Usage Intensity Scale</span>
+                    <div>
+                        <div class="legend-gradient"></div>
+                        <div class="legend-labels">
+                            <span>0</span>
+                            <span>50</span>
+                            <span>100</span>
+                            <span>150</span>
+                            <span>200+</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="legend-section" style="background: linear-gradient(135deg, rgba(255, 235, 59, 0.1), rgba(255, 235, 59, 0.05));">
+                    <span class="legend-label">⚡ Current ECO Level</span>
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                        <div style="font-size: 32px; font-weight: bold; color: var(--text-primary);">${currentEcoLevel}</div>
+                        <div style="font-size: 11px; color: var(--text-secondary); text-align: center;">
+                            Time slots with value ≥ ${currentEcoLevel} will trigger the pump<br>
+                            <span style="opacity: 0.7;">Yellow border indicates automatic pump activation</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="divider"></div>
+                
+                <div class="stats-grid" id="stats"></div>
+            `;
+            
+            content.innerHTML = html;
+
+            const heatmap = document.getElementById('heatmap');
+
+            // Add empty corner cell
+            const corner = document.createElement('div');
+            heatmap.appendChild(corner);
+
+            // Add time headers
+            times.forEach(time => {
+                const header = document.createElement('div');
+                header.className = 'time-header';
+                header.textContent = time;
+                heatmap.appendChild(header);
+            });
+
+            // Add data rows
+            data.days.forEach(dayData => {
+                const dayLabel = document.createElement('div');
+                dayLabel.className = 'day-label';
+                dayLabel.textContent = dayData.name;
+                heatmap.appendChild(dayLabel);
+
+                dayData.values.forEach((value, index) => {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    
+                    // Mark cells that trigger the pump (value >= ECO level)
+                    if (value >= currentEcoLevel) {
+                        cell.classList.add('triggers-pump');
+                    }
+                    
+                    cell.style.background = getColor(value);
+                    const triggerStatus = value >= currentEcoLevel ? ' ⚡ TRIGGERS PUMP' : '';
+                    cell.setAttribute('data-value', `${times[index]} - ${dayData.name}: ${value}${triggerStatus}`);
+                    heatmap.appendChild(cell);
+                });
+            });
+
+            renderStats(data);
+        }
+
+        function renderStats(data) {
+            let totalUsage = 0;
+            let maxValue = 0;
+            let maxDay = '';
+            let maxTime = '';
+            let nonZeroCount = 0;
+            let triggeredCount = 0;
+
+            data.days.forEach(dayData => {
+                dayData.values.forEach((value, index) => {
+                    totalUsage += value;
+                    if (value > 0) nonZeroCount++;
+                    if (value >= currentEcoLevel) triggeredCount++;
+                    if (value > maxValue) {
+                        maxValue = value;
+                        maxDay = dayData.name;
+                        maxTime = times[index];
+                    }
+                });
+            });
+
+            const avgUsage = Math.round(totalUsage / (data.days.length * 48));
+            const activeSlots = nonZeroCount;
+
+            const statsContainer = document.getElementById('stats');
+            statsContainer.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${avgUsage}</div>
+                    <div class="stat-label">Average Intensity</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${maxValue}</div>
+                    <div class="stat-label">Peak @ ${maxDay} ${maxTime}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${activeSlots}</div>
+                    <div class="stat-label">Active Time Slots</div>
+                </div>
+                <div class="stat-card" style="border-color: rgba(255, 235, 59, 0.5);">
+                    <div class="stat-value" style="color: #ffeb3b;">⚡ ${triggeredCount}</div>
+                    <div class="stat-label">Triggered Slots</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${Math.round((activeSlots / 336) * 100)}%</div>
+                    <div class="stat-label">Coverage</div>
+                </div>
+            `;
+        }
+
+        function toggleAutoRefresh() {
+            const toggle = document.getElementById('autoRefreshToggle');
+            
+            if (toggle.checked) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+                toggle.checked = false;
+            } else {
+                autoRefreshInterval = setInterval(fetchData, 60000);
+                toggle.checked = true;
+                fetchData();
+            }
+        }
+
+        // Load saved IP from localStorage
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedIP = localStorage.getItem('espIP');
+            if (savedIP) {
+                document.getElementById('espIP').value = savedIP;
+            }
+        });
+
+        // Save IP to localStorage when changed
+        document.getElementById('espIP').addEventListener('change', (e) => {
+            localStorage.setItem('espIP', e.target.value);
+        });
+        
+        // Theme toggle functionality
+        function toggleTheme() {
+            const html = document.documentElement;
+            const currentTheme = html.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            
+            html.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            
+            // Update theme toggle button
+            const themeIcon = document.getElementById('themeIcon');
+            const themeText = document.getElementById('themeText');
+            
+            if (newTheme === 'light') {
+                themeIcon.textContent = '☀️';
+                themeText.textContent = 'Light';
+            } else {
+                themeIcon.textContent = '🌙';
+                themeText.textContent = 'Dark';
+            }
+            
+            // Re-render heatmap if data exists to update colors
+            if (currentData) {
+                renderHeatmap(currentData);
+            }
+        }
+        
+        // Load saved theme on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedTheme = localStorage.getItem('theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+            
+            // Update theme toggle button based on saved theme
+            const themeIcon = document.getElementById('themeIcon');
+            const themeText = document.getElementById('themeText');
+            
+            if (savedTheme === 'light') {
+                themeIcon.textContent = '☀️';
+                themeText.textContent = 'Light';
+            } else {
+                themeIcon.textContent = '🌙';
+                themeText.textContent = 'Dark';
+            }
+        });
+    </script>
+</body>
+</html>
