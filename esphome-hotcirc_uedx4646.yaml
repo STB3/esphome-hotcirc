@@ -136,17 +136,25 @@ globals:
 # === Sensors & Temperature Probes ===
 one_wire:
 - platform: gpio
-  id: ow_bus
+  id: ow_bus0
   pin:
     number: GPIO39
     mode:
       input: true
       pullup: true
+      
+- platform: gpio
+  id: ow_bus1
+  pin:
+    number: GPIO40
+    mode:
+      input: true
+      pullup: true      
 
 sensor:
   - platform: dallas_temp
-    one_wire_id: ow_bus
-    address: 0x84000000b40d1628
+    one_wire_id: ow_bus0
+    address: 0x0
     name: "Outlet Temperature"
     id: outlet_temp
     update_interval: 1s
@@ -157,8 +165,8 @@ sensor:
           send_every: 1
 
   - platform: dallas_temp
-    one_wire_id: ow_bus
-    address: 0x67000000b3e53728
+    one_wire_id: ow_bus1
+    address: 0x0
     name: "Return Temperature"
     id: return_temp
     update_interval: 1s
