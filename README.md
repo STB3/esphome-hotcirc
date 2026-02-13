@@ -125,7 +125,7 @@ The LCD module requires GPIO17 to be driven HIGH at boot to enable its power sup
 
 ![UEDX4646 round display with interface PCB side view](pictures/hotcirc_uedx4646/esphome-hotcirc_ued4646_with_hotcirc_PCB_side_view.png)
 
-![UEDX4646 round display with interface hotcirc_ued4646_schematics](pictures/hotcirc_uedx4646/esphome-hotcirc_ued4646_with_hotcirc_PCB_side_view.png)
+![UEDX4646 round display with interface hotcirc_ued4646_schematics](pictures/hotcirc_uedx4646/esphome-hotcirc_ued4646_schematics.png)
 
 ---
 
