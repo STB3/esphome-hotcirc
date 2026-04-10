@@ -64,7 +64,7 @@ ota:
 web_server:
   version: 3
   port: 80
-  include_internal: true     # exposes internal handlers
+  include_internal: false     # don't exposes internal handlers
 
 wifi:
 # Uncomment this if you have entered your credentials in the secrets.yaml
