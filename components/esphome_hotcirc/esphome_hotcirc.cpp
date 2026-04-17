@@ -80,6 +80,7 @@ void HotWaterController::loop() {
     if (pump_enabled_) {
       detect_disinfection_cycle_();
       check_schedule();
+      check_thermal_stagnation_();
     }
   }
   
@@ -408,6 +409,96 @@ void HotWaterController::check_anti_stagnation_() {
  * - During idle, 40cm pipe cools down, giving falsely low readings
  * - This ensures accurate baseline for disinfection detection
  */
+/**
+ * Thermal stagnation flush: detects summer heat-soak in return pipe
+ *
+ * Problem: In summer, when the boiler only heats DHW, the return pipe picks up
+ * heat conductively from the boiler. The outlet-return delta shrinks or goes
+ * negative, so pump_control() never sees the expected return temperature RISE
+ * and the pump never starts for a normal request.
+ *
+ * Solution: If (outlet - return) < thermal_stagnation_delta_ for 10 consecutive
+ * seconds, run the pump for THERMAL_STAGNATION_RUNTIME seconds to flush the
+ * stagnant hot water out of the return pipe.
+ *
+ * Guards:
+ *  - Pump must not already be running
+ *  - pump_enabled_ must be true (respected, unlike anti-stagnation)
+ *  - 30-minute cooldown after each flush run
+ *  - Condition must persist for 10 s to ignore transient sensor noise
+ */
+void HotWaterController::check_thermal_stagnation_() {
+  if (pump_running_) {
+    thermal_stagnation_started_ = 0;  // Reset pending state if pump starts for other reason
+    return;
+  }
+
+  if (!clock_ || !clock_->now().is_valid()) return;
+
+  // Cooldown: don't re-trigger within THERMAL_STAGNATION_COOLDOWN seconds
+  if (last_thermal_stagnation_run_ != 0) {
+    time_t now_epoch = clock_->now().timestamp;
+    if ((now_epoch - last_thermal_stagnation_run_) < (time_t)THERMAL_STAGNATION_COOLDOWN)
+      return;
+  }
+
+  float outlet = outlet_ ? outlet_->state : NAN;
+  float ret    = ret_    ? ret_->state    : NAN;
+  if (std::isnan(outlet) || std::isnan(ret)) return;
+
+  float delta = outlet - ret;  // Positive = normal, near-zero/negative = heat soak
+
+  // Only act when return pipe is actually hot – filters out the normal overnight
+  // cool-down where both sensors converge at low temperatures
+  if (ret < thermal_stagnation_min_return_) {
+    if (thermal_stagnation_started_ != 0) {
+      ESP_LOGD(TAG, "[THERMAL-STAGNATION] Return too cold (%.1f°C < %.1f°C min), timer reset",
+               ret, thermal_stagnation_min_return_);
+      thermal_stagnation_started_ = 0;
+    }
+    return;
+  }
+
+  if (delta < thermal_stagnation_delta_) {
+    uint32_t ms_now = millis();
+    if (thermal_stagnation_started_ == 0) {
+      // Condition just appeared – start timing
+      thermal_stagnation_started_ = ms_now;
+      ESP_LOGD(TAG, "[THERMAL-STAGNATION] Condition started: outlet=%.1f°C ret=%.1f°C delta=%.1f°C (threshold=%.1f°C)",
+               outlet, ret, delta, thermal_stagnation_delta_);
+      return;
+    }
+    // Condition is persisting – check if 10 seconds have elapsed
+    if ((ms_now - thermal_stagnation_started_) >= 10000) {
+      ESP_LOGW(TAG, "===========================================");
+      ESP_LOGW(TAG, "[THERMAL-STAGNATION] Return pipe heat-soak detected!");
+      ESP_LOGW(TAG, "  Outlet=%.1f°C  Return=%.1f°C  Delta=%.1f°C (< %.1f°C threshold)",
+               outlet, ret, delta, thermal_stagnation_delta_);
+      ESP_LOGW(TAG, "  Running pump for %u s to flush stagnant return water", THERMAL_STAGNATION_RUNTIME);
+      ESP_LOGW(TAG, "===========================================");
+      thermal_stagnation_started_ = 0;
+      last_thermal_stagnation_run_ = clock_->now().timestamp;
+      run_pump(PumpTrigger::THERMAL_STAGNATION);
+    }
+  } else {
+    // Condition no longer met – cancel pending timer
+    if (thermal_stagnation_started_ != 0) {
+      ESP_LOGD(TAG, "[THERMAL-STAGNATION] Condition cleared (delta=%.1f°C), timer reset", delta);
+      thermal_stagnation_started_ = 0;
+    }
+  }
+}
+
+/**
+ * Detects boiler disinfection cycle by monitoring outlet temperature
+ * Disinfection raises tank temp by ~10°C above normal operating temperature
+ * When detected, triggers pump to run maximum time to disinfect entire circulation system
+ * 
+ * BASELINE STRATEGY: Capture outlet temperature when pump STOPS
+ * - At pump stop, outlet sensor shows actual tank temperature (fresh hot water just arrived)
+ * - During idle, 40cm pipe cools down, giving falsely low readings
+ * - This ensures accurate baseline for disinfection detection
+ */
 void HotWaterController::detect_disinfection_cycle_() {
   if (!outlet_ || !clock_) return;
   
@@ -625,8 +716,10 @@ void HotWaterController::run_pump(PumpTrigger trigger) {
   }
 
   // Check if return temperature is already hot enough (water at taps is warm)
-  // Skip this check for disinfection mode and anti-stagnation (must run regardless of temperature)
-  if (trigger != PumpTrigger::ANTI_STAGNATION && 
+  // Skip for: disinfection, anti-stagnation, thermal-stagnation
+  // (thermal stagnation is triggered precisely BECAUSE return is too warm)
+  if (trigger != PumpTrigger::ANTI_STAGNATION &&
+      trigger != PumpTrigger::THERMAL_STAGNATION &&
       !disinfection_mode_ && 
       ret_->state >= min_return_temp_) {
     ESP_LOGI(TAG, "Pump start skipped: return temperature already hot enough (%.1f°C >= %.1f°C threshold)",
@@ -663,6 +756,7 @@ void HotWaterController::run_pump(PumpTrigger trigger) {
     case PumpTrigger::SCHEDULED: trigger_str = "Schedule"; break;
     case PumpTrigger::DISINFECTION: trigger_str = "Disinfection"; break;
     case PumpTrigger::ANTI_STAGNATION: trigger_str = "Anti-Stagnation"; break;
+    case PumpTrigger::THERMAL_STAGNATION: trigger_str = "Thermal-Stagnation Flush"; break;
     default: break;
   }
   
@@ -726,6 +820,14 @@ void HotWaterController::pump_control() {
       stop_pump("Anti-stagnation complete");
     }
     return;  // Skip temperature checks for anti-stagnation
+  }
+  
+  // Thermal stagnation flush: run for fixed short duration, then let temperatures settle
+  if (pump_trigger_ == PumpTrigger::THERMAL_STAGNATION) {
+    if (elapsed >= THERMAL_STAGNATION_RUNTIME) {
+      stop_pump("Thermal-stagnation flush complete");
+    }
+    return;  // Skip temperature checks – return pipe IS hot, normal logic would stop immediately
   }
   
   // In disinfection mode, always run for maximum time to ensure full system disinfection

@@ -26,7 +26,8 @@ class HotWaterController : public Component {
     WATER_DRAW,        // Started by detected water usage
     SCHEDULED,         // Started by learning/schedule
     DISINFECTION,      // Started by disinfection cycle detection
-    ANTI_STAGNATION    // Started by anti-stagnation (prevents pump seizure)
+    ANTI_STAGNATION,   // Started by anti-stagnation (prevents pump seizure)
+    THERMAL_STAGNATION // Started because return temp >= outlet temp (summer heat soak)
   };
 
   // Sensors & actuators
@@ -66,6 +67,22 @@ class HotWaterController : public Component {
     this->ANTI_STAGNATION_RUNTIME = runtime_seconds;
   }
 
+  void set_thermal_stagnation_runtime(uint32_t runtime_seconds) {
+    this->THERMAL_STAGNATION_RUNTIME = runtime_seconds;
+  }
+
+  void set_thermal_stagnation_cooldown(uint32_t cooldown_seconds) {
+    this->THERMAL_STAGNATION_COOLDOWN = cooldown_seconds;
+  }
+
+  void set_thermal_stagnation_delta(float delta_deg) {
+    this->thermal_stagnation_delta_ = delta_deg;
+  }
+
+  void set_thermal_stagnation_min_return(float min_return_deg) {
+    this->thermal_stagnation_min_return_ = min_return_deg;
+  }
+
   float get_last_cycle_energy() const {
     return last_cycle_energy_;
   }
@@ -95,6 +112,10 @@ class HotWaterController : public Component {
   uint32_t DISINFECTION_COOLDOWN = 3600; // 1 hour cooldown before re-detecting disinfection (seconds)
   uint32_t ANTI_STAGNATION_INTERVAL = 172800; // 48 hours (2 days) in seconds
   uint32_t ANTI_STAGNATION_RUNTIME = 15;     // Anti-stagnation run time (seconds)
+  uint32_t THERMAL_STAGNATION_RUNTIME = 10;  // Thermal stagnation flush run time (seconds)
+  uint32_t THERMAL_STAGNATION_COOLDOWN = 1800; // 30 min cooldown between thermal stagnation runs
+  float    thermal_stagnation_delta_{2.0f};  // outlet - return < this value (°C) triggers flush
+  float    thermal_stagnation_min_return_{40.0f}; // return must be >= this (°C) to trigger flush
   uint8_t LEARN_INC = 40;                // Learning increment per detection
   uint8_t SCHEDULE_THRESHOLD = 120;      // Threshold to trigger scheduled run
   float DECAY = 0.98f;                   // Daily decay factor for learning matrix
@@ -120,6 +141,8 @@ class HotWaterController : public Component {
   PumpTrigger pump_trigger_{PumpTrigger::NONE};  // What triggered the current pump run
   time_t last_disinfection_start_{0};    // Timestamp of last disinfection cycle start (prevents re-trigger)
   time_t last_anti_stagnation_run_{0};   // Timestamp of last anti-stagnation run
+  uint32_t thermal_stagnation_started_{0}; // millis() when condition first met (0 = not pending)
+  time_t   last_thermal_stagnation_run_{0}; // epoch timestamp of last thermal stagnation run
   float baseline_return_{NAN};
   uint32_t pump_start_{0};
   time_t last_run_epoch_ = 0;
@@ -174,6 +197,7 @@ class HotWaterController : public Component {
   void detect_disinfection_cycle_();     // Detects boiler disinfection by monitoring outlet temp
   void check_vacation_mode_();           // Check if entering/exiting vacation mode
   void check_anti_stagnation_();         // Check if anti-stagnation run is needed
+  void check_thermal_stagnation_();      // Check if return >= outlet (summer heat soak flush)
   void handle_user_request();
   void learn_now();
   void decay_table();

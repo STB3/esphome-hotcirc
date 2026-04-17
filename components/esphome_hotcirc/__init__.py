@@ -22,6 +22,10 @@ CONF_MIN_RETURN_TEMP = "min_return_temp"
 CONF_PUMP_FLOW_RATE = "pump_flow_rate"
 CONF_ANTI_STAGNATION_INTERVAL = "anti_stagnation_interval"
 CONF_ANTI_STAGNATION_RUNTIME = "anti_stagnation_runtime"
+CONF_THERMAL_STAGNATION_RUNTIME = "thermal_stagnation_runtime"
+CONF_THERMAL_STAGNATION_COOLDOWN = "thermal_stagnation_cooldown"
+CONF_THERMAL_STAGNATION_DELTA = "thermal_stagnation_delta"
+CONF_THERMAL_STAGNATION_MIN_RETURN = "thermal_stagnation_min_return"
 
 CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(HotWaterController),
@@ -39,6 +43,10 @@ CONFIG_SCHEMA = cv.Schema({
     cv.Optional(CONF_PUMP_FLOW_RATE, default=3.0): cv.float_range(min=0.5, max=50.0),
     cv.Optional(CONF_ANTI_STAGNATION_INTERVAL, default=172800): cv.uint32_t,  # 48 hours in seconds
     cv.Optional(CONF_ANTI_STAGNATION_RUNTIME, default=15): cv.uint32_t,  # 15 seconds
+    cv.Optional(CONF_THERMAL_STAGNATION_RUNTIME, default=10): cv.uint32_t,  # 10 seconds flush
+    cv.Optional(CONF_THERMAL_STAGNATION_COOLDOWN, default=1800): cv.uint32_t,  # 30 min cooldown
+    cv.Optional(CONF_THERMAL_STAGNATION_DELTA, default=2.0): cv.float_range(min=-5.0, max=10.0),
+    cv.Optional(CONF_THERMAL_STAGNATION_MIN_RETURN, default=40.0): cv.float_range(min=20.0, max=60.0),
 }).extend(cv.COMPONENT_SCHEMA)
 
 
@@ -76,3 +84,7 @@ async def to_code(config):
     cg.add(var.set_pump_flow_rate(config[CONF_PUMP_FLOW_RATE]))
     cg.add(var.set_anti_stagnation_interval(config[CONF_ANTI_STAGNATION_INTERVAL]))
     cg.add(var.set_anti_stagnation_runtime(config[CONF_ANTI_STAGNATION_RUNTIME]))
+    cg.add(var.set_thermal_stagnation_runtime(config[CONF_THERMAL_STAGNATION_RUNTIME]))
+    cg.add(var.set_thermal_stagnation_cooldown(config[CONF_THERMAL_STAGNATION_COOLDOWN]))
+    cg.add(var.set_thermal_stagnation_delta(config[CONF_THERMAL_STAGNATION_DELTA]))
+    cg.add(var.set_thermal_stagnation_min_return(config[CONF_THERMAL_STAGNATION_MIN_RETURN]))
