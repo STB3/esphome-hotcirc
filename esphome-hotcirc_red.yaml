@@ -554,8 +554,8 @@ esphome_hotcirc:
                                     # to prevent impeller seizure
   anti_stagnation_runtime: 15       # Anti-stagnation run time in seconds (default: 15 seconds)
                                     # Short run is enough to move impeller and prevent seizure
-  thermal_stagnation_delta: 2.0    # °C: outlet - return < 2°C → Flush
-  thermal_stagnation_runtime: 10   # Sekunden Pumpenlauf
+  thermal_stagnation_delta: 3.0    # °C: outlet - return < 2°C → Flush
+  thermal_stagnation_runtime: 30   # Sekunden Pumpenlauf
   thermal_stagnation_min_return: 40.0  # °C Mindestrücklauftemperatur
   thermal_stagnation_cooldown: 1800  # 30 min Sperrzeit nach Flush
   
