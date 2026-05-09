@@ -13,6 +13,7 @@ esphome:
 
 esp32:
   variant: esp32c6
+  flash_size: 4MB
   framework:
     type: esp-idf
 
@@ -381,6 +382,14 @@ button:
       - lambda: |-
           ESP_LOGI("save_button", "Web UI: Save learning matrix requested");
           id(hotwater).save_learning_matrix();
+          
+  - platform: factory_reset
+    id: factory_reset_btn
+    name: Factory Reset
+    
+  - platform: safe_mode
+    id: button_safe_mode
+    name: Safe Mode Boot
 
 number:
   - platform: template
