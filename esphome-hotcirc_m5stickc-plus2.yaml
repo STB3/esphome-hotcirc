@@ -259,23 +259,20 @@ switch:
     restore_mode: ALWAYS_OFF  # Safety: ensure pump is off on boot
     internal: true  # Hide from UI - controlled internally
     turn_on_action:
-      - lambda: |-
-          std::string url = "http://" + id(smart_plug_ip) + "/switch/relay/turn_on";
-          ESP_LOGI("pump_relay", "Turning ON smart plug at: %s", url.c_str());
-      - http_request.get:
+      - http_request.post:
           url: !lambda |-
             return "http://" + id(smart_plug_ip) + "/switch/relay/turn_on";
+          body: ""
           on_error:
             - logger.log:
                 format: "HTTP Error: Failed to turn ON smart plug"
                 level: ERROR
+
     turn_off_action:
-      - lambda: |-
-          std::string url = "http://" + id(smart_plug_ip) + "/switch/relay/turn_off";
-          ESP_LOGI("pump_relay", "Turning OFF smart plug at: %s", url.c_str());
-      - http_request.get:
+      - http_request.post:
           url: !lambda |-
             return "http://" + id(smart_plug_ip) + "/switch/relay/turn_off";
+          body: ""
           on_error:
             - logger.log:
                 format: "HTTP Error: Failed to turn OFF smart plug"

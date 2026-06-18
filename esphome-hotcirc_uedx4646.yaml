@@ -46,6 +46,15 @@ psram:
   mode: octal   # use octal for at least 8MB PSRAM (2MB use quad)
   speed: 80MHz
 
+# === Modularer Aufbau =====================================================
+# Der komplette Grafik-/Display-Teil (SPI-Bus, Display-Renderer, Fonts,
+# Farben und der Display-Brightness-Regler) liegt ausgelagert in:
+#   esphome-hotcirc_gui.yaml
+# ESPHome fuehrt die Pakete vor der Validierung zusammen, daher koennen
+# beide Dateien gegenseitig auf IDs zugreifen (z. B. disp1, outlet_temp).
+packages:
+  gui: !include packages\esphome-hotcirc_gui.yaml
+
 external_components:
   - source:
       type: local
@@ -127,6 +136,11 @@ globals:
     type: unsigned long
     restore_value: no
     initial_value: '0'
+  # Aktuelle Seite: false = page_main, true = page_heatmap
+  - id: on_heatmap_page
+    type: bool
+    restore_value: no
+    initial_value: 'false'
   # Last encoder value for delta calculation
   - id: last_encoder_value
     type: int
@@ -208,33 +222,39 @@ sensor:
   - platform: rotary_encoder
     name: "Rotary Encoder"
     id: rotary_encoder_sensor
-    pin_a: GPIO5  # Swapped with pin_b to reverse direction
-    pin_b: GPIO6  # Swapped with pin_a to reverse direction
-    internal: true  # Don't expose to HA, only used internally
-    on_value:
-      then:
-        - lambda: |-
-            // Calculate delta from last encoder value
-            int current_encoder = (int)x;
-            int delta = current_encoder - id(last_encoder_value);
-            id(last_encoder_value) = current_encoder;
-
-            // Get current ECO level
-            float current_eco = id(eco_level_config).state;
-
-            // Calculate new ECO level (step of 5 per encoder click)
-            float new_eco = current_eco + (delta * 5.0);
-
-            // Clamp to valid range (0-255)
-            if (new_eco < 0) new_eco = 0;
-            if (new_eco > 255) new_eco = 255;
-
-            // Update ECO level only if changed
-            if (new_eco != current_eco) {
-              id(eco_level_config).publish_state(new_eco);
-              id(eco_change_time) = millis();  // Set feedback timer
-              ESP_LOGI("encoder", "ECO Level: %.0f (delta: %d)", new_eco, delta);
-            }
+    pin_a:
+      number: GPIO5
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: GPIO6
+      mode:
+        input: true
+        pullup: true
+    resolution: 4
+    internal: true
+    on_clockwise:
+      - lambda: |-
+          // Debounce: Events innerhalb 50ms nach letztem Event ignorieren
+          unsigned long now = millis();
+          if (now - id(last_encoder_value) < 50) return;
+          id(last_encoder_value) = now;
+          float new_eco = id(eco_level_config).state + 5.0;
+          if (new_eco > 255) new_eco = 255;
+          id(eco_level_config).publish_state(new_eco);
+          id(eco_change_time) = millis();
+          ESP_LOGI("encoder", "ECO+ → %.0f", new_eco);
+    on_anticlockwise:
+      - lambda: |-
+          unsigned long now = millis();
+          if (now - id(last_encoder_value) < 50) return;
+          id(last_encoder_value) = now;
+          float new_eco = id(eco_level_config).state - 5.0;
+          if (new_eco < 0) new_eco = 0;
+          id(eco_level_config).publish_state(new_eco);
+          id(eco_change_time) = millis();
+          ESP_LOGI("encoder", "ECO- → %.0f", new_eco);
 
 
 text_sensor:
@@ -334,23 +354,20 @@ switch:
     restore_mode: ALWAYS_OFF  # Safety: ensure pump is off on boot
     internal: true  # Hide from UI - controlled internally
     turn_on_action:
-      - lambda: |-
-          std::string url = "http://" + id(smart_plug_ip) + "/switch/relay/turn_on";
-          ESP_LOGI("pump_relay", "Turning ON smart plug at: %s", url.c_str());
-      - http_request.get:
+      - http_request.post:
           url: !lambda |-
             return "http://" + id(smart_plug_ip) + "/switch/relay/turn_on";
+          body: ""
           on_error:
             - logger.log:
                 format: "HTTP Error: Failed to turn ON smart plug"
                 level: ERROR
+
     turn_off_action:
-      - lambda: |-
-          std::string url = "http://" + id(smart_plug_ip) + "/switch/relay/turn_off";
-          ESP_LOGI("pump_relay", "Turning OFF smart plug at: %s", url.c_str());
-      - http_request.get:
+      - http_request.post:
           url: !lambda |-
             return "http://" + id(smart_plug_ip) + "/switch/relay/turn_off";
+          body: ""
           on_error:
             - logger.log:
                 format: "HTTP Error: Failed to turn OFF smart plug"
@@ -544,21 +561,6 @@ number:
           // Immediately update the JSON sensor so heatmap shows new trigger thresholds
           id(learning_matrix_json).update();
 
-  - platform: template
-    name: "Display Brightness"
-    id: display_brightness
-    icon: "mdi:brightness-6"
-    min_value: 0
-    max_value: 255
-    step: 5
-    initial_value: 64  # Start at 25% for testing
-    optimistic: true
-    mode: slider
-    on_value:
-      - lambda: |-
-          id(disp1).set_brightness((uint8_t)x);
-          ESP_LOGI("display", "Display brightness set to %.0f", x);
-
 # LCD Power: GPIO17 output - required by esphome_hotcirc component
 # No name = not exposed to web interface
 # Set HIGH in on_boot lambda
@@ -579,447 +581,9 @@ touchscreen:
   display: disp1
 #  interrupt_pin: GPIO4
   reset_pin: GPIO2
-  update_interval: 50ms # recommended if interrupt_pin is disabled
-  on_touch:
-    - lambda: |-
-        ESP_LOGI("touch", "Touch at x=%d, y=%d (raw: x=%d, y=%d)",
-            touch.x, touch.y, touch.x_raw, touch.y_raw);
-
-        // Store touch position for visual feedback
-        id(touch_indicator_x) = touch.x;
-        id(touch_indicator_y) = touch.y;
-        id(touch_indicator_time) = millis();
-
-        // Display center point
-        int center_x = 233;
-        int center_y = 233;
-
-        // Calculate distance from center
-        int dx = touch.x - center_x;
-        int dy = touch.y - center_y;
-        int distance = sqrt(dx*dx + dy*dy);
-
-        // === CENTER CIRCLE: Manual Pump Trigger (radius 60px) ===
-        if (distance < 60) {
-          ESP_LOGI("touch", "CENTER ZONE: Manual pump trigger");
-          id(hotwater).run_pump();
-          return;
-        }
-
-        // === TOP HALF: Enable/Disable Toggle (y < 233, outside center) ===
-        if (touch.y < 200 && distance >= 60) {
-          ESP_LOGI("touch", "TOP ZONE: Toggle pump enable/disable");
-          if (id(hotwater).pump_enabled_) {
-            ESP_LOGI("touch", "Disabling pump");
-            id(hotwater).disable_pump();
-          } else {
-            ESP_LOGI("touch", "Enabling pump");
-            id(hotwater).enable_pump();
-          }
-          return;
-        }
-
-        // === BOTTOM LEFT: Test Smart Plug Connection ===
-        if (touch.y > 350 && touch.x < 233) {
-          ESP_LOGI("touch", "BOTTOM LEFT ZONE: Test smart plug");
-          id(test_smart_plug_script).execute();
-          return;
-        }
-
-        // === BOTTOM RIGHT: Save Learning Matrix ===
-        if (touch.y > 350 && touch.x >= 233) {
-          ESP_LOGI("touch", "BOTTOM RIGHT ZONE: Save learning matrix");
-          id(hotwater).save_learning_matrix();
-          return;
-        }
-
-# Fonts for display - INCREASED SIZES for 466x466 display
-font:
-  - file: "gfonts://Roboto"
-    id: font_small
-    size: 18  # Was 12
-  - file: "gfonts://Roboto"
-    id: font_medium
-    size: 24  # Was 16
-  - file: "gfonts://Roboto"
-    id: font_large
-    size: 32  # Was 20
-  - file: "gfonts://Roboto"
-    id: font_temp
-    size: 48  # Was 28
-  - file: "gfonts://Roboto"
-    id: font_huge
-    size: 64  # New, for prominent display
-
-color:
-  - id: color_white
-    red: 100%
-    green: 100%
-    blue: 100%
-  - id: color_black
-    red: 0%
-    green: 0%
-    blue: 0%
-  - id: color_red
-    red: 100%
-    green: 0%
-    blue: 0%
-  - id: color_green
-    red: 0%
-    green: 100%
-    blue: 0%
-  - id: color_yellow
-    red: 100%
-    green: 100%
-    blue: 0%
-  - id: color_blue
-    red: 0%
-    green: 50%
-    blue: 100%
-  - id: color_gray
-    red: 50%
-    green: 50%
-    blue: 50%
-  - id: color_orange
-    red: 100%
-    green: 65%
-    blue: 0%
-  - id: color_dark_gray
-    red: 20%
-    green: 20%
-    blue: 20%
-
-# 1.5 inch, 466x466 Colorful TFT LCD, CO5300
-spi:
-  id: display_qspi
-  type: quad
-  clk_pin: GPIO10
-  data_pins: [GPIO13, GPIO11, GPIO14, GPIO9]
-
-display:
-  - platform: mipi_spi
-    id: disp1
-    model: CO5300
-    reset_pin: GPIO8
-    cs_pin: GPIO12
-    bus_mode: quad
-    brightness: 64  # 0-255, starting with 25% (64) for testing, change to 192 for 75%
-    dimensions:
-      height: 466
-      width: 466
-      offset_height: 0
-      offset_width: 6  # Try 6-pixel horizontal offset
-    color_depth: 16
-    buffer_size: 100%  # Increased to fix horizontal line artifact
-    init_sequence:
-    # CO5300 init sequence - window addressing handled by dimensions/offset parameters
-    - [ 0xD0, 0x07, 0x42, 0x18]  # Gamma correction positive
-    - delay 10ms
-    - [ 0xD1, 0x00, 0x07, 0x10]  # Gamma correction negative
-    - delay 10ms
-    - [ 0x36, 0x00 ]             # Memory access control (no rotation/mirror)
-#    - [ 0x3A, 0x55 ]             # Pixel format: 16-bit RGB565
-    - [ 0x11 ]                   # Sleep out
-    - delay 120ms
-    - [ 0x29 ]                   # Display on
-    - delay 20ms
-    lambda: |-
-      // === 466x466 ROUND DISPLAY LAYOUT ===
-      // Center coordinates - logical center (offset handled by CASET in init sequence)
-      int center_x = 233;  // Logical center (column offset corrected in init)
-      int center_y = 233;  // Vertical center
-      int display_radius = 233;
-
-      // Safety check: ensure display is ready
-      if (!id(outlet_temp).has_state() && !id(return_temp).has_state()) {
-        it.print(center_x, center_y, id(font_large), id(color_white), TextAlign::CENTER, "Initializing...");
-        return;
-      }
-
-      // Clear screen with black background
-      it.fill(id(color_black));
-
-      // Get current status
-      bool pump_running = id(hotwater).pump_running_;
-      bool pump_enabled = id(hotwater).pump_enabled_;
-      bool wifi_conn = id(wifi_connected);
-
-      // === TOP STATUS BAR ===
-      // WiFi Status Icon - positioned to fit fully within circular display
-      // Icon has arcs extending 26px from center, so needs to be well inside boundary
-      int wifi_x = 110;  // Was 80, moved further inward
-      int wifi_y = 110;  // Was 80, moved further inward
-      if (wifi_conn) {
-        float rssi = id(wifi_signal_sensor).state;
-        int num_arcs = 3;
-
-        if (!isnan(rssi)) {
-          if (rssi < -70) num_arcs = 1;
-          else if (rssi < -60) num_arcs = 2;
-          else num_arcs = 3;
-        }
-
-        it.filled_circle(wifi_x, wifi_y, 3, id(color_green));
-
-        if (num_arcs >= 1) {
-          for (int angle = 200; angle <= 340; angle += 8) {
-            float rad1 = angle * 3.14159 / 180.0;
-            float rad2 = (angle + 8) * 3.14159 / 180.0;
-            int x1 = wifi_x + 10 * cos(rad1);
-            int y1 = wifi_y + 10 * sin(rad1);
-            int x2 = wifi_x + 10 * cos(rad2);
-            int y2 = wifi_y + 10 * sin(rad2);
-            it.line(x1, y1, x2, y2, id(color_green));
-          }
-        }
-
-        if (num_arcs >= 2) {
-          for (int angle = 210; angle <= 330; angle += 8) {
-            float rad1 = angle * 3.14159 / 180.0;
-            float rad2 = (angle + 8) * 3.14159 / 180.0;
-            int x1 = wifi_x + 18 * cos(rad1);
-            int y1 = wifi_y + 18 * sin(rad1);
-            int x2 = wifi_x + 18 * cos(rad2);
-            int y2 = wifi_y + 18 * sin(rad2);
-            it.line(x1, y1, x2, y2, id(color_green));
-          }
-        }
-
-        if (num_arcs >= 3) {
-          for (int angle = 220; angle <= 320; angle += 8) {
-            float rad1 = angle * 3.14159 / 180.0;
-            float rad2 = (angle + 8) * 3.14159 / 180.0;
-            int x1 = wifi_x + 26 * cos(rad1);
-            int y1 = wifi_y + 26 * sin(rad1);
-            int x2 = wifi_x + 26 * cos(rad2);
-            int y2 = wifi_y + 26 * sin(rad2);
-            it.line(x1, y1, x2, y2, id(color_green));
-          }
-        }
-      } else {
-        // WiFi disconnected - red with strikethrough
-        it.filled_circle(wifi_x, wifi_y, 3, id(color_red));
-
-        for (int angle = 200; angle <= 340; angle += 8) {
-          float rad1 = angle * 3.14159 / 180.0;
-          float rad2 = (angle + 8) * 3.14159 / 180.0;
-          int x1 = wifi_x + 10 * cos(rad1);
-          int y1 = wifi_y + 10 * sin(rad1);
-          int x2 = wifi_x + 10 * cos(rad2);
-          int y2 = wifi_y + 10 * sin(rad2);
-          it.line(x1, y1, x2, y2, id(color_red));
-        }
-
-        it.line(wifi_x - 20, wifi_y + 20, wifi_x + 20, wifi_y - 20, id(color_red));
-        it.line(wifi_x - 19, wifi_y + 20, wifi_x + 21, wifi_y - 20, id(color_red));
-
-        it.print(wifi_x + 28, wifi_y - 10, id(font_small), id(color_red), "AP");
-      }
-
-      // System status text (top center) - moved down to fit circular boundary
-      it.print(center_x, 50, id(font_medium), id(color_white), TextAlign::TOP_CENTER, "HOTCIRC");
-
-      // === PUMP SYMBOL IN CENTER (radius 60px) ===
-      int pump_x = center_x;
-      int pump_y = center_y;
-
-      // Draw circular touch zone outline
-      it.circle(pump_x, pump_y, 60, pump_enabled ? id(color_gray) : id(color_dark_gray));
-
-      if (pump_running) {
-        // Animated pump - green
-        it.circle(pump_x, pump_y, 18, id(color_green));
-        it.filled_circle(pump_x, pump_y, 4, id(color_green));
-
-        // 6 impeller blades
-        for (int i = 0; i < 6; i++) {
-          float angle = i * 60 * 3.14159 / 180.0;
-          int x1 = pump_x + 4 * cos(angle);
-          int y1 = pump_y + 4 * sin(angle);
-          int x2 = pump_x + 14 * cos(angle);
-          int y2 = pump_y + 14 * sin(angle);
-          it.line(x1, y1, x2, y2, id(color_green));
-          it.line(x1 + 1, y1, x2 + 1, y2, id(color_green));
-        }
-
-        // Flow lines
-        it.line(pump_x - 26, pump_y - 6, pump_x - 18, pump_y - 6, id(color_green));
-        it.line(pump_x - 26, pump_y + 6, pump_x - 18, pump_y + 6, id(color_green));
-        it.line(pump_x + 18, pump_y, pump_x + 26, pump_y, id(color_green));
-      } else {
-        // Static pump - gray
-        Color pump_color = pump_enabled ? id(color_gray) : id(color_red);
-        it.circle(pump_x, pump_y, 18, pump_color);
-        it.filled_circle(pump_x, pump_y, 4, pump_color);
-
-        for (int i = 0; i < 6; i++) {
-          float angle = i * 60 * 3.14159 / 180.0;
-          int x1 = pump_x + 4 * cos(angle);
-          int y1 = pump_y + 4 * sin(angle);
-          int x2 = pump_x + 14 * cos(angle);
-          int y2 = pump_y + 14 * sin(angle);
-          it.line(x1, y1, x2, y2, pump_color);
-          it.line(x1 + 1, y1, x2 + 1, y2, pump_color);
-        }
-
-        it.line(pump_x - 26, pump_y - 6, pump_x - 18, pump_y - 6, pump_color);
-        it.line(pump_x - 26, pump_y + 6, pump_x - 18, pump_y + 6, pump_color);
-        it.line(pump_x + 18, pump_y, pump_x + 26, pump_y, pump_color);
-      }
-
-      // === TAP TO RUN TEXT (Y: 293) ===
-      // Tap icon/text below pump (close to pump)
-      it.print(pump_x, pump_y + 60, id(font_small), id(color_white), TextAlign::CENTER, "TAP TO RUN");
-
-      // === TEMPERATURE DISPLAY (Left & Right of Center) ===
-      // Adjusted for circular display - moved slightly toward center
-      // Outlet Temperature (Left)
-      it.print(70, center_y - 60, id(font_medium), id(color_white), "Outlet");
-      if (!isnan(id(outlet_temp).state)) {
-        char temp_str[10];
-        snprintf(temp_str, sizeof(temp_str), "%.1f°", id(outlet_temp).state);
-        it.print(70, center_y - 20, id(font_temp), id(color_orange), temp_str);
-      } else {
-        it.print(70, center_y - 20, id(font_temp), id(color_gray), "-.-°");
-      }
-
-      // Return Temperature (Right)
-      it.print(396, center_y - 60, id(font_medium), id(color_white), TextAlign::TOP_RIGHT, "Return");
-      if (!isnan(id(return_temp).state)) {
-        char temp_str[10];
-        snprintf(temp_str, sizeof(temp_str), "%.1f°", id(return_temp).state);
-        it.print(396, center_y - 20, id(font_temp), id(color_blue), TextAlign::TOP_RIGHT, temp_str);
-      } else {
-        it.print(396, center_y - 20, id(font_temp), id(color_gray), TextAlign::TOP_RIGHT, "-.-°");
-      }
-
-      // === TOP ZONE INDICATOR (Y: 110-150) ===
-      std::string top_text = pump_enabled ? "ENABLED" : "DISABLED";
-      Color top_color = pump_enabled ? id(color_green) : id(color_red);
-      it.print(center_x, 110, id(font_large), top_color, TextAlign::TOP_CENTER, top_text.c_str());
-      it.print(center_x, 145, id(font_small), id(color_gray), TextAlign::TOP_CENTER, "Tap top to toggle");
-
-      // === STATUS TEXT (Y: 315-345) ===
-      std::string status_text = "";
-      Color status_color = id(color_white);
-
-      if (pump_running) {
-        auto trigger = id(hotwater).get_pump_trigger();
-
-        switch(trigger) {
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::MANUAL_BUTTON:
-            status_text = "Manual Button";
-            status_color = id(color_yellow);
-            break;
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::MANUAL_WEBUI:
-            status_text = "Web UI";
-            status_color = id(color_yellow);
-            break;
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::WATER_DRAW:
-            status_text = "Water Draw";
-            status_color = id(color_green);
-            break;
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::SCHEDULED:
-            status_text = "Scheduled";
-            status_color = id(color_blue);
-            break;
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::DISINFECTION:
-            status_text = "Disinfection";
-            status_color = id(color_orange);
-            break;
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::ANTI_STAGNATION:
-            status_text = "Anti-Stagnation";
-            status_color = id(color_orange);
-            break;
-          default:
-            status_text = "Running";
-            status_color = id(color_white);
-        }
-      } else if (!pump_enabled) {
-        status_text = "System Disabled";
-        status_color = id(color_red);
-      } else {
-        status_text = "Ready";
-        status_color = id(color_green);
-      }
-
-      it.print(center_x, 315, id(font_large), status_color, TextAlign::TOP_CENTER, status_text.c_str());
-
-      // === ECO LEVEL INDICATOR (Y: 345-369) ===
-      // Display current ECO level with icon and highlight when recently changed
-      float eco_level = id(eco_level_config).state;
-      bool eco_recently_changed = (millis() - id(eco_change_time)) < 2000;  // 2 second highlight
-
-      char eco_text[20];
-      snprintf(eco_text, sizeof(eco_text), "ECO: %.0f", eco_level);
-
-      // Highlight ECO level when recently changed via encoder
-      Color eco_color = eco_recently_changed ? id(color_yellow) : id(color_green);
-      it.print(center_x, 345, id(font_medium), eco_color, TextAlign::TOP_CENTER, eco_text);
-
-      // === PERMANENT CIRCULAR ECO LEVEL INDICATOR ===
-      // Draw arc around display edge showing ECO level (0-255 mapped to 0-360°)
-      // Start at top (270° in standard coords, -90° from right)
-      float eco_percentage = eco_level / 255.0;  // 0.0 to 1.0
-      float arc_degrees = eco_percentage * 360.0;  // 0° to 360°
-
-      int arc_radius = 228;  // 5 pixels inside display edge (233 - 5)
-      int arc_thickness = 10;  // 10 pixel thick arc (increased from 5)
-
-      // Draw background circle (dark gray) to show full 360° range - every 1° for solid appearance
-      for (int deg = 0; deg < 360; deg += 1) {
-        float angle_rad = (deg - 90) * 3.14159 / 180.0;
-
-        // Draw thickness by drawing multiple radii
-        for (int r = 0; r < arc_thickness; r++) {
-          int current_radius = arc_radius - r;
-          int x = center_x + current_radius * cos(angle_rad);
-          int y = center_y + current_radius * sin(angle_rad);
-          it.draw_pixel_at(x, y, id(color_dark_gray));
-        }
-      }
-
-      // Draw ECO level arc on top - every 1° for solid appearance
-      for (int deg = 0; deg < (int)arc_degrees; deg += 1) {
-        float angle_rad = (deg - 90) * 3.14159 / 180.0;  // Start from top
-
-        // Draw thickness by drawing multiple radii
-        for (int r = 0; r < arc_thickness; r++) {
-          int current_radius = arc_radius - r;
-          int x = center_x + current_radius * cos(angle_rad);
-          int y = center_y + current_radius * sin(angle_rad);
-
-          // Color: Yellow when recently changed, green otherwise
-          Color arc_color = eco_recently_changed ? id(color_yellow) : id(color_green);
-          it.draw_pixel_at(x, y, arc_color);
-        }
-      }
-
-      // === BOTTOM STATUS - Circular boundary aware ===
-      // Smart Plug Status (centered)
-      bool plug_connected = id(smart_plug_connected);
-      Color plug_color = plug_connected ? id(color_green) : id(color_red);
-      std::string plug_ip = id(smart_plug_ip).c_str();
-
-      // Plug IP centered at Y=375 (moved down for ECO display)
-      it.print(center_x, 375, id(font_small), id(color_white), TextAlign::TOP_CENTER, "Smart Plug");
-      it.print(center_x, 395, id(font_small), plug_color, TextAlign::TOP_CENTER, plug_ip.c_str());
-
-      if (!plug_connected) {
-        int text_width = plug_ip.length() * 11;
-        it.line(center_x - text_width/2, 402, center_x + text_width/2, 402, id(color_red));
-      }
-
-      // Interaction hints - SHORT text to fit circular boundary
-      // At Y=418, safe X range is roughly ±150px from center
-      it.print(center_x, 418, id(font_small), id(color_gray), TextAlign::TOP_CENTER, "Tap bottom for actions");
-
-      // === TOUCH FEEDBACK INDICATOR ===
-      // Show visual feedback for 500ms after touch
-      if (id(touch_indicator_x) >= 0 && (millis() - id(touch_indicator_time)) < 500) {
-        it.filled_circle(id(touch_indicator_x), id(touch_indicator_y), 8, id(color_yellow));
-        it.circle(id(touch_indicator_x), id(touch_indicator_y), 12, id(color_yellow));
-      }
+  update_interval: 50ms
+  # Touch wird direkt von LVGL ausgewertet; Interaktion über Button-Widgets
+  # mit on_click in esphome-hotcirc_gui.yaml (siehe lvgl:-Block).
 
 binary_sensor:
   - platform: gpio
@@ -1031,10 +595,29 @@ binary_sensor:
     filters:
       - delayed_on: 50ms  # Debounce
     internal: true
+    on_click:
+      # Kurzer Druck (< 500ms): Seite wechseln
+      min_length: 50ms
+      max_length: 500ms
+      then:
+        - lambda: |-
+            id(on_heatmap_page) = !id(on_heatmap_page);
+        - if:
+            condition:
+              lambda: 'return id(on_heatmap_page);'
+            then:
+              - lvgl.page.show: page_heatmap
+            else:
+              - lvgl.page.show: page_main
     on_press:
-      - lambda: |-
-          ESP_LOGI("button", "Hardware button pressed - requesting pump run");
-          id(hotwater).run_pump();
+      # Langer Druck (> 500ms): Pumpe manuell starten
+      then:
+        - delay: 500ms
+        - lambda: |-
+            if (id(hw_button).state) {
+              ESP_LOGI("button", "Long press - run pump");
+              id(hotwater).run_pump();
+            }
 
   # Smart plug connectivity status
   - platform: template
