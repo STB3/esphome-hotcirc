@@ -596,28 +596,13 @@ binary_sensor:
       - delayed_on: 50ms  # Debounce
     internal: true
     on_click:
-      # Kurzer Druck (< 500ms): Seite wechseln
+      # Druck auf Displaygehäuse: Pumpe manuell starten
       min_length: 50ms
-      max_length: 500ms
+      max_length: 1000ms
       then:
         - lambda: |-
-            id(on_heatmap_page) = !id(on_heatmap_page);
-        - if:
-            condition:
-              lambda: 'return id(on_heatmap_page);'
-            then:
-              - lvgl.page.show: page_heatmap
-            else:
-              - lvgl.page.show: page_main
-    on_press:
-      # Langer Druck (> 500ms): Pumpe manuell starten
-      then:
-        - delay: 500ms
-        - lambda: |-
-            if (id(hw_button).state) {
-              ESP_LOGI("button", "Long press - run pump");
-              id(hotwater).run_pump();
-            }
+            ESP_LOGI("button", "HW button - run pump");
+            id(hotwater).run_pump();
 
   # Smart plug connectivity status
   - platform: template
@@ -707,7 +692,6 @@ esphome_hotcirc:
   return_sensor: return_temp
   pump_switch: pump_relay
   time_source: sntp_time
-  button: hw_button
   # Note: led_green and led_yellow removed - Display shows status instead
   outlet_rise: 1.0      # Minimum temperature RISE to detect water draw (°C)
                         # Reduced from 1.5 to match slower temperature response in 40cm pipe

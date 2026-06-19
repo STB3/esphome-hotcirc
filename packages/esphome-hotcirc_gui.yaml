@@ -1,0 +1,991 @@
+# =============================================================================
+#  esphome-hotcirc_gui.yaml  --  LVGL Display-Teil (Nest-Stil Redesign)
+# =============================================================================
+#  Hardware:  UEDX4646  –  ESP32-S3, 1.5" rundes Display 466×466, CO5300/QSPI
+#  Stil:      Nest-Thermostat-inspiriert: schwarzer HG, großer Arc-Ring,
+#             große zentrale Temperatur, dezente Sekundärinfos
+#
+#  Koordinatensystem LVGL: align CENTER = Mitte des Displays (233/233)
+#    x positiv = nach rechts,  x negativ = nach links
+#    y positiv = nach unten,   y negativ = nach oben
+#    Displayrand:  x ±233,  y ±233  (Kreis r=233)
+#
+#  Einbindung in esphome-hotcirc_uedx4646.yaml:
+#      packages:
+#        gui: !include esphome-hotcirc_gui.yaml
+#
+#  Referenzierte IDs aus der Hauptdatei (hier NICHT definiert):
+#    disp1, my_touchscreen
+#    outlet_temp, return_temp
+#    eco_level_config          (number, 0-255)
+#    hotwater                  (custom component)
+#    wifi_connected            (binary_sensor)
+#    wifi_signal_sensor        (sensor, dBm)
+#    smart_plug_connected      (binary_sensor)
+#    smart_plug_ip             (text_sensor)
+#    pump_status_sensor        (text_sensor: "Idle","Running","Learning",...)
+#
+#  >>> WAHRSCHEINLICH ANZUPASSEN:
+#    1) lvgl: displays:/touchscreens: – ID-Namen je nach ESPHome-Version prüfen
+#    2) arc start_angle: 120 / end_angle: 420 – ergibt 300° Bogen (Lücke unten 60°)
+#       Falls der Bogen falsch dreht: start/end tauschen
+#    3) Grad-Zeichen (°) in font_huge/font_temp – falls als Kasten: glyphs ergänzen
+#    4) buffer_size: 25% bei PSRAM-Engpass auf 15% reduzieren
+#    5) interval update_gui: 500ms – ggf. auf 1000ms erhöhen für CPU-Entlastung
+# =============================================================================
+
+
+# =============================================================================
+#  LAYOUT-PARAMETER  –  hier alle Positionen und Größen zentral anpassen
+# =============================================================================
+substitutions:
+
+  # ── Arc-Ring ────────────────────────────────────────────────────────────────
+  arc_size:         "430"   # Breite/Höhe beider Arc-Widgets (px)
+  arc_width:        "18"    # Ringdicke (px)
+
+  # ── Indikator-Punkt (oben auf dem Ring, 12-Uhr) ───────────────────────────
+  dot_x:            "0"     # Startposition (wird per Lambda überschrieben)
+  dot_y:            "-215"  # Startposition bei eco=0 (wird per Lambda überschrieben)
+  dot_size:         "14"    # Durchmesser (px)
+
+  # ── HOTCIRC Titel ─────────────────────────────────────────────────────────
+  title_x:          "0"
+  title_y:          "-130"
+
+  # ── ENABLED / DISABLED Badge ──────────────────────────────────────────────
+  badge_x:          "0"
+  badge_y:          "-105"
+
+  # ── Flow Temperature (left) ────────────────────────────────────────────
+  outlet_label_x:   "-110"
+  outlet_label_y:   "-72"
+  outlet_temp_x:    "-125"
+  outlet_temp_y:    "-30"
+
+  # ── Return Temperature (right) ──────────────────────────────────────────
+  return_label_x:   "110"
+  return_label_y:   "-72"
+  return_temp_x:    "125"
+  return_temp_y:    "-30"
+
+  # ── Pump Icon (center) ──────────────────────────────────────────────────
+  pump_icon_x:      "0"
+  pump_icon_y:      "-35"    # leicht nach oben, Mitte zwischen Temps und Status
+  pump_icon_size:   "85"   # Breite/Höhe in px
+
+  # ── Pump-Status ───────────────────────────────────────────────────────────
+  status_x:         "0"
+  status_y:         "80"
+
+  # ── ECO-Level Label ───────────────────────────────────────────────────────
+  eco_x:            "0"
+  eco_y:            "108"
+
+  # ── Trennlinie ────────────────────────────────────────────────────────────
+  sep_y:            "130"   # y-Koordinate beider Linienpunkte
+  sep_half_width:   "80"    # halbe Linienbreite (Linie von -sep_half_width bis +sep_half_width)
+
+  # ── WiFi Label ────────────────────────────────────────────────────────────
+  #   Plug disconnected: links  (-70)
+  #   Plug connected:    ausgeblendet (via Lambda)
+  wifi_x:           "-70"
+  wifi_y:           "148"
+
+  # ── WiFi RSSI ─────────────────────────────────────────────────────────────
+  #   Plug disconnected: sichtbar  (-20)
+  #   Plug connected:    ausgeblendet (via Lambda)
+  rssi_x:           "-20"
+  rssi_y:           "148"
+
+  # ── Smart-Plug Label + IP ─────────────────────────────────────────────────
+  #   Plug disconnected: rechts (+40)
+  #   Plug connected:    zentriert (0), volle Breite (via Lambda)
+  plug_x:           "40"
+  plug_y:           "148"
+
+  # ── Touch-Zone: Oben (Seitenwechsel: Haupt ↔ Lernmatrix) ────────────────
+  #
+  #  Einzige aktive Touch-Zone: obere zwei Drittel des Displays
+  #  Hardware-Button (GPIO0): nur Pumpe manuell starten
+  #
+  touch_top_x:        "0"     # volle Breite
+  touch_top_y:        "0"     # ab Displayoberkante
+  touch_top_w:        "466"   # volle Displaybreite
+  touch_top_h:        "310"   # obere 310px ≈ zwei Drittel (466 × 2/3 ≈ 310)
+
+  # ── Touch-Zone: Unten (Smart-Plug testen) ────────────────────────────────
+  touch_btm_x:        "0"     # volle Breite
+  touch_btm_y:        "310"   # ab y=310 (unteres Drittel)
+  touch_btm_w:        "466"   # volle Displaybreite
+  touch_btm_h:        "156"   # bis Displayrand (466 - 310)
+
+
+# =============================================================================
+#  HARDWARE
+# =============================================================================
+
+# === Pump Icon =============================================================
+#  PNG-Datei  packages/pump_icon.png
+#  type: BINARY: Alpha-Kanal wird als 1-bit-Maske verwendet (transparent/opak).
+#  Recolor übermalt alle opaken Pixel mit der Zielfarbe – funktioniert nur
+#  mit BINARY zuverlässig, nicht mit RGB/RGBA.
+#  Voraussetzung: Icon-Pixel müssen im Alpha-Kanal opak sein (α > 127).
+#  Falls das Icon dunkel/schwarz ist: in einem Bildeditor aufhellen oder
+#  den Alpha-Kanal als Maske neu aufbauen (Pixel weiß, Alpha aus Original).
+image:
+  - file: packages/pump_icon.png
+    id: pump_icon
+    type: BINARY
+    resize: 85x85
+
+# === Pump Animation Frames (green, running state) ===========================
+  - file: packages/pump_icon_f0.png
+    id: pump_icon_f0
+    type: BINARY
+    resize: 85x85
+  - file: packages/pump_icon_f1.png
+    id: pump_icon_f1
+    type: BINARY
+    resize: 85x85
+  - file: packages/pump_icon_f2.png
+    id: pump_icon_f2
+    type: BINARY
+    resize: 85x85
+
+# === QSPI-Bus ================================================================
+spi:
+  id: display_qspi
+  type: quad
+  clk_pin: GPIO10
+  data_pins: [GPIO13, GPIO11, GPIO14, GPIO9]
+
+
+# === Display (LVGL-Modus) ====================================================
+display:
+  - platform: mipi_spi
+    id: disp1
+    model: CO5300
+    reset_pin: GPIO8
+    cs_pin: GPIO12
+    bus_mode: quad
+    brightness: 130
+    auto_clear_enabled: false
+    update_interval: never
+    dimensions:
+      height: 466
+      width: 466
+      offset_height: 0
+      offset_width: 6
+    color_depth: 16
+    buffer_size: 100%
+    init_sequence:
+      - [0xD0, 0x07, 0x42, 0x18]
+      - delay 10ms
+      - [0xD1, 0x00, 0x07, 0x10]
+      - delay 10ms
+      - [0x36, 0x00]
+      - [0x11]
+      - delay 120ms
+      - [0x29]
+      - delay 20ms
+
+
+# === Fonts ===================================================================
+font:
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 18
+    glyphs: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,-:°%/ "
+  - file: "gfonts://Roboto"
+    id: font_medium
+    size: 22
+    glyphs: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,-:°%/ "
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 500
+    id: font_label
+    size: 16
+    glyphs: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,-:°%/ "
+  - file: "gfonts://Roboto"
+    id: font_title
+    size: 20
+    glyphs: "HOTIRC "
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 500
+    id: font_temp
+    size: 56
+    glyphs: "0123456789.°-"
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 500
+    id: font_huge
+    size: 80
+    glyphs: "0123456789.°-"
+
+
+# =============================================================================
+#  LVGL
+# =============================================================================
+lvgl:
+  displays:
+    - disp1
+  touchscreens:
+    - my_touchscreen
+  color_depth: 16
+  bg_color: 0x000000
+  buffer_size: 25%
+
+  style_definitions:
+    - id: style_no_border
+      border_width: 0
+      bg_opa: TRANSP
+      pad_all: 0
+
+  pages:
+    - id: page_main
+      bg_color: 0x000000
+      bg_opa: COVER
+
+      widgets:
+
+        # ── Hintergrund-Arc (grau, 300° Bogen, Lücke 60° unten) ───────────────
+        - arc:
+            id: arc_bg
+            align: CENTER
+            x: 0
+            y: 0
+            width: ${arc_size}
+            height: ${arc_size}
+            arc_width: ${arc_width}
+            min_value: 0
+            max_value: 255
+            value: 255
+            start_angle: 120
+            end_angle: 60
+            adjustable: false
+            clickable: false
+            arc_color: 0x2A2A2A
+            arc_rounded: true
+            indicator:
+              arc_color: 0x2A2A2A
+              arc_width: ${arc_width}
+              arc_rounded: true
+
+        # ── Aktiv-Arc (farbig, Länge = ECO-Level) ─────────────────────────────
+        - arc:
+            id: arc_eco
+            align: CENTER
+            x: 0
+            y: 0
+            width: ${arc_size}
+            height: ${arc_size}
+            arc_width: ${arc_width}
+            min_value: 0
+            max_value: 255
+            value: 120
+            start_angle: 120
+            end_angle: 60
+            adjustable: false
+            clickable: false
+            arc_opa: TRANSP
+            arc_rounded: true
+            indicator:
+              arc_color: 0x4A90D9
+              arc_width: ${arc_width}
+              arc_rounded: true
+
+        # ── Indikator-Punkt oben ───────────────────────────────────────────────
+        - obj:
+            id: dot_indicator
+            align: CENTER
+            x: ${dot_x}
+            y: ${dot_y}
+            width: ${dot_size}
+            height: ${dot_size}
+            radius: 7
+            bg_color: 0xFFFFFF
+            bg_opa: COVER
+            border_width: 2
+            border_color: 0x000000
+
+        # ── HOTCIRC Titel ──────────────────────────────────────────────────────
+        - label:
+            id: lbl_title
+            text: "HOTCIRC"
+            align: CENTER
+            x: ${title_x}
+            y: ${title_y}
+            text_font: font_title
+            text_color: 0x808080
+            text_letter_space: 4
+
+        # ── ENABLED / DISABLED Badge ───────────────────────────────────────────
+        - label:
+            id: lbl_enabled
+            text: "ENABLED"
+            align: CENTER
+            x: ${badge_x}
+            y: ${badge_y}
+            text_font: font_label
+            text_color: 0x4A90D9
+
+        # ── Flow Temperature (left) ─────────────────────────────────────────
+        - label:
+            id: lbl_outlet_label
+            text: "FLOW"
+            align: CENTER
+            x: ${outlet_label_x}
+            y: ${outlet_label_y}
+            text_font: font_medium
+            text_color: 0x505050
+            text_letter_space: 1
+
+        - label:
+            id: lbl_outlet_temp
+            text: "--.-°"
+            align: CENTER
+            x: ${outlet_temp_x}
+            y: ${outlet_temp_y}
+            text_font: font_temp
+            text_color: 0xCCCCCC
+
+        # ── Return Temperature (right) ───────────────────────────────────────
+        - label:
+            id: lbl_return_label
+            text: "RETURN"
+            align: CENTER
+            x: ${return_label_x}
+            y: ${return_label_y}
+            text_font: font_medium
+            text_color: 0x505050
+            text_letter_space: 1
+
+        - label:
+            id: lbl_return_temp
+            text: "--.-°"
+            align: CENTER
+            x: ${return_temp_x}
+            y: ${return_temp_y}
+            text_font: font_temp
+            text_color: 0xCCCCCC
+
+        # ── Pump Icon (center) – zwei Ebenen für zuverlässiges Umfärben ────
+        # img_pump_idle: weiß  (sichtbar im Ruhezustand)
+        # img_pump_run:  green (visible when pump running)
+        # Umschalten per LV_OBJ_FLAG_HIDDEN im Lambda
+        - image:
+            id: img_pump_idle
+            src: pump_icon
+            align: CENTER
+            x: ${pump_icon_x}
+            y: ${pump_icon_y}
+            width: ${pump_icon_size}
+            height: ${pump_icon_size}
+            recolor: 0xFFFFFF
+            recolor_opa: 100%
+        - image:
+            id: img_pump_run_f0
+            hidden: true
+            src: pump_icon_f0
+            align: CENTER
+            x: ${pump_icon_x}
+            y: ${pump_icon_y}
+            width: ${pump_icon_size}
+            height: ${pump_icon_size}
+            recolor: 0x00CC44
+            recolor_opa: 100%
+        - image:
+            id: img_pump_run_f1
+            hidden: true
+            src: pump_icon_f1
+            align: CENTER
+            x: ${pump_icon_x}
+            y: ${pump_icon_y}
+            width: ${pump_icon_size}
+            height: ${pump_icon_size}
+            recolor: 0x00CC44
+            recolor_opa: 100%
+        - image:
+            id: img_pump_run_f2
+            hidden: true
+            src: pump_icon_f2
+            align: CENTER
+            x: ${pump_icon_x}
+            y: ${pump_icon_y}
+            width: ${pump_icon_size}
+            height: ${pump_icon_size}
+            recolor: 0x00CC44
+            recolor_opa: 100%
+        - image:
+            id: img_pump_dis
+            hidden: true
+            src: pump_icon
+            align: CENTER
+            x: ${pump_icon_x}
+            y: ${pump_icon_y}
+            width: ${pump_icon_size}
+            height: ${pump_icon_size}
+            recolor: 0x404040
+            recolor_opa: 100%
+        - image:
+            id: img_pump_disinfect
+            hidden: true
+            src: pump_icon
+            align: CENTER
+            x: ${pump_icon_x}
+            y: ${pump_icon_y}
+            width: ${pump_icon_size}
+            height: ${pump_icon_size}
+            recolor: 0xE040FB
+            recolor_opa: 100%
+
+        # ── Pump-Status ────────────────────────────────────────────────────────
+        - label:
+            id: lbl_pump_status
+            text: "Idle"
+            align: CENTER
+            x: ${status_x}
+            y: ${status_y}
+            text_font: font_medium
+            text_color: 0x606060
+
+        # ── ECO-Level Label ────────────────────────────────────────────────────
+        - label:
+            id: lbl_eco
+            text: "ECO  120"
+            align: CENTER
+            x: ${eco_x}
+            y: ${eco_y}
+            text_font: font_label
+            text_color: 0x4A90D9
+
+        # ── Trennlinie ─────────────────────────────────────────────────────────
+        - line:
+            id: sep_line
+            points:
+              - x: -${sep_half_width}
+                y: ${sep_y}
+              - x: ${sep_half_width}
+                y: ${sep_y}
+            line_color: 0x282828
+            line_width: 1
+
+        # ── WiFi Label ─────────────────────────────────────────────────────────
+        - label:
+            id: lbl_wifi
+            text: "WiFi"
+            align: CENTER
+            x: ${wifi_x}
+            y: ${wifi_y}
+            text_font: font_label
+            text_color: 0x4A90D9
+
+        # ── WiFi RSSI ──────────────────────────────────────────────────────────
+        - label:
+            id: lbl_rssi
+            text: ""
+            align: CENTER
+            x: ${rssi_x}
+            y: ${rssi_y}
+            text_font: font_label
+            text_color: 0x505050
+
+        # ── Smart-Plug Label + IP ──────────────────────────────────────────────
+        - label:
+            id: lbl_plug
+            text: "Plug: --"
+            align: CENTER
+            x: ${plug_x}
+            y: ${plug_y}
+            text_font: font_label
+            text_color: 0x505050
+
+        # ── Touch-Zone: Oben – Seitenwechsel (Haupt ↔ Lernmatrix) ──────────────
+        - button:
+            id: touch_top
+            align: TOP_LEFT
+            x: ${touch_top_x}
+            y: ${touch_top_y}
+            width: ${touch_top_w}
+            height: ${touch_top_h}
+            bg_opa: TRANSP
+            border_width: 0
+            on_click:
+              - lambda: id(on_heatmap_page) = !id(on_heatmap_page);
+              - if:
+                  condition:
+                    lambda: 'return id(on_heatmap_page);'
+                  then:
+                    - lvgl.page.show: page_heatmap
+                  else:
+                    - lvgl.page.show: page_main
+
+        # ── Touch-Zone: Unten – Smart-Plug testen ────────────────────────────
+        - button:
+            id: touch_btm
+            align: TOP_LEFT
+            x: ${touch_btm_x}
+            y: ${touch_btm_y}
+            width: ${touch_btm_w}
+            height: ${touch_btm_h}
+            bg_opa: TRANSP
+            border_width: 0
+            on_click:
+              - script.execute: test_smart_plug_script
+
+    # =========================================================================
+    #  SEITE 2: Lernmatrix Heatmap
+    # =========================================================================
+    - id: page_heatmap
+      bg_color: 0x000000
+      bg_opa: COVER
+
+      widgets:
+
+        # ── Titel ──────────────────────────────────────────────────────────────
+        # y=36: Abstand zur Displaymitte = 233-36 = 197px < r=233 → sicher im Kreis
+        - label:
+            id: lbl_hm_title
+            text: "LEARN MATRIX"
+            align: TOP_MID
+            x: 0
+            y: 36
+            text_font: font_label
+            text_color: 0x505050
+            text_letter_space: 3
+
+        # ── Zurück-Hinweis ────────────────────────────────────────────────────
+        - label:
+            id: lbl_hm_back
+            text: "< TOUCH"
+            align: TOP_RIGHT
+            x: -8
+            y: 36
+            text_font: font_label
+            text_color: 0x303030
+
+        # ── ECO-Level Anzeige auf Seite 2 ────────────────────────────────────
+        # y=-40: Abstand zur Displaymitte = 233-(466-40) = -(233) → d=40px < r ✓
+        - label:
+            id: lbl_hm_eco
+            text: "ECO 120"
+            align: BOTTOM_MID
+            x: 0
+            y: -40
+            text_font: font_label
+            text_color: 0x4A90D9
+
+        # ── Legende unten ──────────────────────────────────────────────────────
+        # y=-22: Unterrand bei y=444 → d=211px < r=233 ✓
+        - label:
+            id: lbl_hm_legend
+            text: "0 --- ECO --- 255"
+            align: BOTTOM_MID
+            x: 0
+            y: -22
+            text_font: font_label
+            text_color: 0x404040
+
+        # ── Zeitachse ─────────────────────────────────────────────────────────
+        # 48 Slots = 24h, 1 Slot = 30min. Markierungen: 0h, 6h, 12h, 18h, 24h
+        # canvas_x=72, CW=7 → slot_x = 72 + slot*7; y=76 (mittig zw. Titel und Canvas)
+        # Geometrische Prüfung (alle Punkte d ≤ r=233):
+        #   "0"  x=68,  y=76: d=224.9 margin=+8.1px ✓
+        #   "6"  x=152, y=76: d=174.9 margin=+58px  ✓
+        #   "12" x=231, y=76: d=157.2 margin=+76px  ✓
+        #   "18" x=315, y=76: d=181.5 margin=+52px  ✓
+        #   "24" x=390, y=76: d=226.3 margin=+6.7px ✓ (rechtsbündig vor Canvas-Ende)
+        - label:
+            id: lbl_time_0
+            text: "0"
+            align: TOP_LEFT
+            x: 68
+            y: 76
+            text_font: font_label
+            text_color: 0x383838
+        - label:
+            id: lbl_time_6
+            text: "6"
+            align: TOP_LEFT
+            x: 152
+            y: 76
+            text_font: font_label
+            text_color: 0x383838
+        - label:
+            id: lbl_time_12
+            text: "12"
+            align: TOP_LEFT
+            x: 231
+            y: 76
+            text_font: font_label
+            text_color: 0x383838
+        - label:
+            id: lbl_time_18
+            text: "18"
+            align: TOP_LEFT
+            x: 315
+            y: 76
+            text_font: font_label
+            text_color: 0x383838
+        - label:
+            id: lbl_time_24
+            text: "24"
+            align: TOP_LEFT
+            x: 390
+            y: 76
+            text_font: font_label
+            text_color: 0x383838
+
+        # ── Canvas für das Heatmap-Grid ───────────────────────────────────────
+        # Rundes Display r=233, Mittelpunkt (233,233).
+        # Alle 4 Canvas-Ecken müssen innerhalb des sichtbaren Kreises liegen.
+        #
+        # Geometrische Prüfung (Ecke → Abstand zur Displaymitte ≤ 233):
+        #   (50,94):   d=229.8  margin=+3.2px  ✓
+        #   (72,94):   d=212.7  margin=+20.3px ✓
+        #   (408,94):  d=223.5  margin=+9.5px  ✓
+        #   (50,374):  d=231.0  margin=+2.0px  ✓
+        #   (72,374):  d=214.0  margin=+19.0px ✓
+        #   (408,374): d=224.7  margin=+8.3px  ✓
+        #
+        # Grid: 7 Tage × 48 Slots, CW=7px (48×7=336), CH=40px (7×40=280)
+        - label:
+            id: lbl_days
+            text: "Mo\nTu\nWe\nTh\nFr\nSa\nSu"
+            align: TOP_LEFT
+            x: 50
+            y: 104
+            text_font: font_label
+            text_color: 0x606060
+            text_line_space: 20
+
+        - canvas:
+            id: heatmap_canvas
+            align: TOP_LEFT
+            x: 72
+            y: 94
+            width: 336
+            height: 280
+
+        # ── Touch: vollflächig – zurück zur Hauptseite ────────────────────────
+        - button:
+            id: touch_heatmap_back
+            align: TOP_LEFT
+            x: 0
+            y: 0
+            width: 466
+            height: 466
+            bg_opa: TRANSP
+            border_width: 0
+            on_click:
+              - lambda: id(on_heatmap_page) = false;
+              - lvgl.page.show: page_main
+
+
+# =============================================================================
+#  GLOBALS
+# =============================================================================
+globals:
+  - id: anim_frame
+    type: int
+    restore_value: false
+    initial_value: '0'
+
+# =============================================================================
+#  INTERVALL: GUI-Werte aktualisieren
+# =============================================================================
+interval:
+  - interval: 500ms
+    id: update_gui
+    then:
+      - lambda: |-
+          // ── Outlet Temp (klein links) ─────────────────────────────────────
+          if (!isnan(id(outlet_temp).state)) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.1f°", id(outlet_temp).state);
+            lv_label_set_text(id(lbl_outlet_temp), buf);
+          } else {
+            lv_label_set_text(id(lbl_outlet_temp), "--.-°");
+          }
+
+          // ── Return Temp (klein rechts) ────────────────────────────────────
+          if (!isnan(id(return_temp).state)) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.1f°", id(return_temp).state);
+            lv_label_set_text(id(lbl_return_temp), buf);
+          } else {
+            lv_label_set_text(id(lbl_return_temp), "--.-°");
+          }
+
+          // ── ECO-Level → Arc + Label ───────────────────────────────────────
+          int eco = (int)id(eco_level_config).state;
+          lv_arc_set_value(id(arc_eco), eco);
+          char eco_buf[20];
+          snprintf(eco_buf, sizeof(eco_buf), "ECO  %d", eco);
+          lv_label_set_text(id(lbl_eco), eco_buf);
+
+          // ── Indikator-Punkt ans Arc-Ende wandern lassen ───────────────────
+          // Arc: start_angle=120°, end_angle=60° (=420°), Bogen=300°, Uhrzeigersinn
+          // LVGL-Winkel: 0°=3-Uhr, wächst im Uhrzeigersinn
+          // Radius Ringmitte: arc_size/2 - arc_width/2 = 215 - 9 = 206 px
+          {
+            const float arc_radius = 206.0f;
+            const float arc_start  = 120.0f;   // Grad bei eco=0
+            const float arc_range  = 300.0f;   // Grad Gesamtbogen
+            float angle_deg = arc_start + (eco / 255.0f) * arc_range;
+            float angle_rad = angle_deg * (M_PI / 180.0f);
+            int dot_px = (int)roundf(arc_radius * cosf(angle_rad));
+            int dot_py = (int)roundf(arc_radius * sinf(angle_rad));
+            lv_obj_align(id(dot_indicator), LV_ALIGN_CENTER, dot_px, dot_py);
+          }
+
+          // ── Pump-Status → Text + Arc-Farbe ───────────────────────────────
+          std::string status = id(pump_status).state;
+          lv_label_set_text(id(lbl_pump_status), status.c_str());
+
+          lv_color_t arc_color;
+          lv_color_t dot_color;
+          lv_color_t eco_text_color;
+
+
+          if (status.find("Running") != std::string::npos || status.find("Forced") != std::string::npos) {
+            arc_color       = lv_color_hex(0xFF6B35);
+            dot_color       = lv_color_hex(0xFF6B35);
+            eco_text_color  = lv_color_hex(0xFF6B35);
+            lv_obj_set_style_text_color(id(lbl_pump_status),
+              lv_color_hex(0xFF6B35), LV_PART_MAIN);
+          } else if (status.find("Disabled") != std::string::npos) {
+            arc_color       = lv_color_hex(0x505050);
+            dot_color       = lv_color_hex(0x505050);
+            eco_text_color  = lv_color_hex(0x505050);
+            lv_obj_set_style_text_color(id(lbl_pump_status),
+              lv_color_hex(0x505050), LV_PART_MAIN);
+          } else if (status.find("Disinfection") != std::string::npos) {
+            arc_color       = lv_color_hex(0xE040FB);
+            dot_color       = lv_color_hex(0xE040FB);
+            eco_text_color  = lv_color_hex(0xE040FB);
+            lv_obj_set_style_text_color(id(lbl_pump_status),
+              lv_color_hex(0xE040FB), LV_PART_MAIN);
+          } else {
+            arc_color       = lv_color_hex(0x4A90D9);
+            dot_color       = lv_color_hex(0xFFFFFF);
+            eco_text_color  = lv_color_hex(0x4A90D9);
+            lv_obj_set_style_text_color(id(lbl_pump_status),
+              lv_color_hex(0x606060), LV_PART_MAIN);
+          }
+
+          // Arc-Indikatorfarbe (LVGL v8: LV_PART_INDICATOR)
+          lv_obj_set_style_arc_color(id(arc_eco), arc_color, LV_PART_INDICATOR);
+          // Dot-Hintergrundfarbe
+          lv_obj_set_style_bg_color(id(dot_indicator), dot_color, LV_PART_MAIN);
+          // Pumpen-Icon: passendes vorgerenderte Farb-Layer einblenden
+          bool p_run      = status.find("Running") != std::string::npos
+                         || status.find("Forced")  != std::string::npos;
+          bool p_dis      = status.find("Disabled")     != std::string::npos;
+          bool p_disinfect= status.find("Disinfection")  != std::string::npos;
+          if (p_run)       { // Frames werden vom anim_pump-Intervall gesteuert;
+                             // hier nur idle/dis/disinfect ausblenden
+                             lv_obj_add_flag  (id(img_pump_idle),      LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_dis),       LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_disinfect), LV_OBJ_FLAG_HIDDEN); }
+          else if (p_dis)  { lv_obj_clear_flag(id(img_pump_dis),       LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_idle),      LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f0),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f1),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f2),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_disinfect),LV_OBJ_FLAG_HIDDEN); }
+          else if (p_disinfect){ lv_obj_clear_flag(id(img_pump_disinfect),LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_idle),      LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f0),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f1),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f2),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_dis),      LV_OBJ_FLAG_HIDDEN); }
+          else             { lv_obj_clear_flag(id(img_pump_idle),      LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f0),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f1),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f2),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_dis),      LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_disinfect),LV_OBJ_FLAG_HIDDEN); }
+          lv_label_set_text(id(lbl_pump_status), status.c_str());
+          // ECO-Label-Farbe
+          lv_obj_set_style_text_color(id(lbl_eco), eco_text_color, LV_PART_MAIN);
+
+          // ── Enabled / Disabled Badge ──────────────────────────────────────
+          bool enabled = id(hotwater).pump_enabled_;
+          lv_label_set_text(id(lbl_enabled), enabled ? "ENABLED" : "DISABLED");
+          lv_obj_set_style_text_color(id(lbl_enabled),
+            enabled ? lv_color_hex(0x4A90D9) : lv_color_hex(0x505050),
+            LV_PART_MAIN);
+
+          // ── WiFi + Smart-Plug (platzsparend) ─────────────────────────────
+          // Plug connected: hide WiFi label + RSSI,
+          //   center plug label with full width.
+          // Plug disconnected: WiFi left + RSSI + plug right as usual.
+          bool plug_ok = id(smart_plug_connected);
+
+          if (plug_ok) {
+            // WiFi und RSSI ausblenden
+            lv_obj_add_flag(id(lbl_wifi), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(lbl_rssi), LV_OBJ_FLAG_HIDDEN);
+
+            // Plug-Label zentriert positionieren
+            lv_obj_set_style_text_align(id(lbl_plug), LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_align(id(lbl_plug), LV_ALIGN_CENTER, 0, 148);
+
+            std::string plug_text = "Plug: " + id(smart_plug_ip);
+            lv_label_set_text(id(lbl_plug), plug_text.c_str());
+
+            // ── Plug-Farbe = RSSI-Qualität (rot → gelb → grün) ───────────────
+            // Schwellwerte: ≤ -80 dBm = rot, -60 dBm = gelb, ≥ -50 dBm = grün
+            {
+              int rssi = (int)id(wifi_signal_sensor).state;
+              // t: 0.0 (rot, -80 dBm) … 1.0 (grün, -50 dBm), geklemmt
+              float t = (float)(rssi - (-80)) / (float)((-50) - (-80));
+              if (t < 0.0f) t = 0.0f;
+              if (t > 1.0f) t = 1.0f;
+              uint8_t r, g;
+              if (t < 0.5f) {
+                // rot (255,0,0) → gelb (255,200,0)
+                r = 255;
+                g = (uint8_t)(t * 2.0f * 200.0f);
+              } else {
+                // gelb (255,200,0) → grün (0,200,0)
+                r = (uint8_t)((1.0f - (t - 0.5f) * 2.0f) * 255.0f);
+                g = 200;
+              }
+              lv_obj_set_style_text_color(id(lbl_plug),
+                lv_color_make(r, g, 0), LV_PART_MAIN);
+            }
+          } else {
+            // WiFi und RSSI einblenden
+            lv_obj_clear_flag(id(lbl_wifi), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(lbl_rssi), LV_OBJ_FLAG_HIDDEN);
+
+            // Plug-Label zurück auf ursprüngliche rechte Position
+            lv_obj_set_style_text_align(id(lbl_plug), LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+            lv_obj_align(id(lbl_plug), LV_ALIGN_CENTER, 40, 148);
+
+            lv_label_set_text(id(lbl_plug), "Plug: --");
+            lv_obj_set_style_text_color(id(lbl_plug),
+              lv_color_hex(0x505050), LV_PART_MAIN);
+
+            // WiFi aktualisieren
+            if (id(wifi_connected)) {
+              int rssi = (int)id(wifi_signal_sensor).state;
+              char rssi_buf[12];
+              snprintf(rssi_buf, sizeof(rssi_buf), "%d dBm", rssi);
+              lv_label_set_text(id(lbl_rssi), rssi_buf);
+              lv_obj_set_style_text_color(id(lbl_wifi),
+                lv_color_hex(0x4A90D9), LV_PART_MAIN);
+            } else {
+              lv_label_set_text(id(lbl_rssi), "");
+              lv_obj_set_style_text_color(id(lbl_wifi),
+                lv_color_hex(0x505050), LV_PART_MAIN);
+            }
+          }
+
+          // ── Heatmap ECO-Label (Seite 2) ───────────────────────────────────
+          snprintf(eco_buf, sizeof(eco_buf), "ECO  %d", eco);
+          lv_label_set_text(id(lbl_hm_eco), eco_buf);
+
+  # Pump animation (only when running)
+  - interval: 150ms
+    id: anim_pump
+    then:
+      - lambda: |-
+          std::string status = id(pump_status).state;
+          bool p_run = status.find("Running") != std::string::npos
+                    || status.find("Forced")  != std::string::npos;
+          if (!p_run) return;
+          // advance frame
+          id(anim_frame) = (id(anim_frame) + 1) % 3;
+          // show current frame, hide others
+          lv_obj_t* frames[3] = {
+            id(img_pump_run_f0),
+            id(img_pump_run_f1),
+            id(img_pump_run_f2)
+          };
+          for (int i = 0; i < 3; i++) {
+            if (i == id(anim_frame))
+              lv_obj_clear_flag(frames[i], LV_OBJ_FLAG_HIDDEN);
+            else
+              lv_obj_add_flag(frames[i], LV_OBJ_FLAG_HIDDEN);
+          }
+
+  # Heatmap neu zeichnen (langsamer Intervall – 30s reicht)
+  - interval: 30s
+    id: update_heatmap
+    then:
+      - lvgl.widget.redraw: heatmap_canvas
+      - lambda: |-
+          // ── Heatmap Canvas zeichnen ───────────────────────────────────────
+          // Rundes Display r=233, Mittelpunkt (233,233).
+          // Canvas: 336 × 280 px ab (72, 94) – alle 4 Ecken geometrisch geprüft,
+          // sicher innerhalb des sichtbaren Kreisbereichs (min. +2px Randabstand).
+          // Grid: 7 Tage (Zeilen) × 48 Slots (Spalten)
+          // Zellgröße: CW=7px (48×7=336px), CH=40px (7×40=280px)
+
+          lv_obj_t* canvas = id(heatmap_canvas);
+          int eco_threshold = (int)id(eco_level_config).state;
+
+          const int COLS = 48;
+          const int ROWS = 7;
+          const int CW   = 7;   // 48 × 7 = 336px = Canvas-Breite exakt
+          const int CH   = 40;  // 7 × 40 = 280px = Canvas-Höhe exakt
+          const int GAP  = 0;
+
+          // Hintergrund löschen
+          lv_canvas_fill_bg(canvas, lv_color_hex(0x000000), LV_OPA_COVER);
+
+          // Tages-Labels werden separat im lbl_days-Widget gesetzt
+          // (Canvas kann keinen Text zeichnen ohne Font-Buffer)
+
+          for (int day = 0; day < ROWS; day++) {
+            for (int slot = 0; slot < COLS; slot++) {
+              uint8_t val = id(hotwater).learn_[day][slot];
+
+              // Farbe nach Intensität (5 Stufen)
+              lv_color_t cell_color;
+              if      (val == 0)    cell_color = lv_color_hex(0x1A1A1A); // leer
+              else if (val <  50)   cell_color = lv_color_hex(0x1565C0); // blau
+              else if (val < 120)   cell_color = lv_color_hex(0x2E7D32); // grün
+              else if (val < 190)   cell_color = lv_color_hex(0xE65100); // orange
+              else                  cell_color = lv_color_hex(0xB71C1C); // rot
+
+              // ECO-Schwelle: gelb überschreiben wenn Zelle triggert
+              if (val >= (uint8_t)eco_threshold && val > 0)
+                cell_color = lv_color_hex(0xF9A825);
+
+              int x0 = slot * (CW + GAP);
+              int y0 = day  * (CH + GAP);
+
+              // Zelle pixelweise füllen mit Bounds-Check
+              for (int py = y0; py < y0 + CH && py < 280; py++) {
+                for (int px = x0; px < x0 + CW && px < 336; px++) {
+                  lv_canvas_set_px(canvas, px, py, cell_color, LV_OPA_COVER);
+                }
+              }
+            }
+          }
+
+
+# =============================================================================
+#  DISPLAY BRIGHTNESS
+# =============================================================================
+number:
+  - platform: template
+    name: "Display Brightness"
+    id: display_brightness
+    icon: "mdi:brightness-6"
+    min_value: 10
+    max_value: 255
+    step: 5
+    initial_value: 64
+    optimistic: true
+    on_value:
+      - lambda: id(disp1).set_brightness(x);
