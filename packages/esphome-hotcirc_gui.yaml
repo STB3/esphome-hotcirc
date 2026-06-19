@@ -82,10 +82,6 @@ substitutions:
   eco_x:            "0"
   eco_y:            "108"
 
-  # ── Trennlinie ────────────────────────────────────────────────────────────
-  sep_y:            "130"   # y-Koordinate beider Linienpunkte
-  sep_half_width:   "80"    # halbe Linienbreite (Linie von -sep_half_width bis +sep_half_width)
-
   # ── WiFi Label ────────────────────────────────────────────────────────────
   #   Plug disconnected: links  (-70)
   #   Plug connected:    ausgeblendet (via Lambda)
@@ -464,17 +460,6 @@ lvgl:
             text_font: font_label
             text_color: 0x4A90D9
 
-        # ── Trennlinie ─────────────────────────────────────────────────────────
-        - line:
-            id: sep_line
-            points:
-              - x: -${sep_half_width}
-                y: ${sep_y}
-              - x: ${sep_half_width}
-                y: ${sep_y}
-            line_color: 0x282828
-            line_width: 1
-
         # ── WiFi Label ─────────────────────────────────────────────────────────
         - label:
             id: lbl_wifi
@@ -515,6 +500,11 @@ lvgl:
             height: ${touch_top_h}
             bg_opa: TRANSP
             border_width: 0
+            border_opa: TRANSP
+            outline_width: 0
+            outline_opa: TRANSP
+            shadow_width: 0
+            radius: 0
             on_click:
               - lambda: id(on_heatmap_page) = !id(on_heatmap_page);
               - if:
@@ -535,6 +525,11 @@ lvgl:
             height: ${touch_btm_h}
             bg_opa: TRANSP
             border_width: 0
+            border_opa: TRANSP
+            outline_width: 0
+            outline_opa: TRANSP
+            shadow_width: 0
+            radius: 0
             on_click:
               - script.execute: test_smart_plug_script
 
