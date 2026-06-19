@@ -60,13 +60,13 @@ substitutions:
   # ── Flow Temperature (left) ────────────────────────────────────────────
   outlet_label_x:   "-110"
   outlet_label_y:   "-72"
-  outlet_temp_x:    "-125"
+  outlet_temp_x:    "-120"
   outlet_temp_y:    "-30"
 
   # ── Return Temperature (right) ──────────────────────────────────────────
   return_label_x:   "110"
   return_label_y:   "-72"
-  return_temp_x:    "125"
+  return_temp_x:    "120"
   return_temp_y:    "-30"
 
   # ── Pump Icon (center) ──────────────────────────────────────────────────
@@ -265,10 +265,10 @@ lvgl:
             end_angle: 60
             adjustable: false
             clickable: false
-            arc_color: 0x2A2A2A
+            arc_color: 0x707070
             arc_rounded: true
             indicator:
-              arc_color: 0x2A2A2A
+              arc_color: 0x707070
               arc_width: ${arc_width}
               arc_rounded: true
 
@@ -291,7 +291,7 @@ lvgl:
             arc_opa: TRANSP
             arc_rounded: true
             indicator:
-              arc_color: 0x4A90D9
+              arc_color: 0x5BAAFF
               arc_width: ${arc_width}
               arc_rounded: true
 
@@ -317,7 +317,7 @@ lvgl:
             x: ${title_x}
             y: ${title_y}
             text_font: font_title
-            text_color: 0x808080
+            text_color: 0xA0A0A0
             text_letter_space: 4
 
         # ── ENABLED / DISABLED Badge ───────────────────────────────────────────
@@ -328,7 +328,7 @@ lvgl:
             x: ${badge_x}
             y: ${badge_y}
             text_font: font_label
-            text_color: 0x4A90D9
+            text_color: 0x5BAAFF
 
         # ── Flow Temperature (left) ─────────────────────────────────────────
         - label:
@@ -338,7 +338,7 @@ lvgl:
             x: ${outlet_label_x}
             y: ${outlet_label_y}
             text_font: font_medium
-            text_color: 0x505050
+            text_color: 0x909090
             text_letter_space: 1
 
         - label:
@@ -348,7 +348,7 @@ lvgl:
             x: ${outlet_temp_x}
             y: ${outlet_temp_y}
             text_font: font_temp
-            text_color: 0xCCCCCC
+            text_color: 0xFFFFFF
 
         # ── Return Temperature (right) ───────────────────────────────────────
         - label:
@@ -358,7 +358,7 @@ lvgl:
             x: ${return_label_x}
             y: ${return_label_y}
             text_font: font_medium
-            text_color: 0x505050
+            text_color: 0x909090
             text_letter_space: 1
 
         - label:
@@ -368,7 +368,7 @@ lvgl:
             x: ${return_temp_x}
             y: ${return_temp_y}
             text_font: font_temp
-            text_color: 0xCCCCCC
+            text_color: 0xFFFFFF
 
         # ── Pump Icon (center) – zwei Ebenen für zuverlässiges Umfärben ────
         # img_pump_idle: weiß  (sichtbar im Ruhezustand)
@@ -426,7 +426,7 @@ lvgl:
             y: ${pump_icon_y}
             width: ${pump_icon_size}
             height: ${pump_icon_size}
-            recolor: 0x404040
+            recolor: 0x808080
             recolor_opa: 100%
         - image:
             id: img_pump_disinfect
@@ -448,7 +448,7 @@ lvgl:
             x: ${status_x}
             y: ${status_y}
             text_font: font_medium
-            text_color: 0x606060
+            text_color: 0x909090
 
         # ── ECO-Level Label ────────────────────────────────────────────────────
         - label:
@@ -458,7 +458,7 @@ lvgl:
             x: ${eco_x}
             y: ${eco_y}
             text_font: font_label
-            text_color: 0x4A90D9
+            text_color: 0x5BAAFF
 
         # ── WiFi Label ─────────────────────────────────────────────────────────
         - label:
@@ -468,7 +468,7 @@ lvgl:
             x: ${wifi_x}
             y: ${wifi_y}
             text_font: font_label
-            text_color: 0x4A90D9
+            text_color: 0x5BAAFF
 
         # ── WiFi RSSI ──────────────────────────────────────────────────────────
         - label:
@@ -478,7 +478,7 @@ lvgl:
             x: ${rssi_x}
             y: ${rssi_y}
             text_font: font_label
-            text_color: 0x505050
+            text_color: 0x909090
 
         # ── Smart-Plug Label + IP ──────────────────────────────────────────────
         - label:
@@ -488,7 +488,7 @@ lvgl:
             x: ${plug_x}
             y: ${plug_y}
             text_font: font_label
-            text_color: 0x505050
+            text_color: 0x909090
 
         # ── Touch-Zone: Oben – Seitenwechsel (Haupt ↔ Lernmatrix) ──────────────
         - button:
@@ -551,7 +551,7 @@ lvgl:
             x: 0
             y: 36
             text_font: font_label
-            text_color: 0x505050
+            text_color: 0x909090
             text_letter_space: 3
 
         # ── Zurück-Hinweis ────────────────────────────────────────────────────
@@ -562,7 +562,7 @@ lvgl:
             x: -8
             y: 36
             text_font: font_label
-            text_color: 0x303030
+            text_color: 0x707070
 
         # ── ECO-Level Anzeige auf Seite 2 ────────────────────────────────────
         # y=-40: Abstand zur Displaymitte = 233-(466-40) = -(233) → d=40px < r ✓
@@ -573,7 +573,7 @@ lvgl:
             x: 0
             y: -40
             text_font: font_label
-            text_color: 0x4A90D9
+            text_color: 0x5BAAFF
 
         # ── Legende unten ──────────────────────────────────────────────────────
         # y=-22: Unterrand bei y=444 → d=211px < r=233 ✓
@@ -584,7 +584,7 @@ lvgl:
             x: 0
             y: -22
             text_font: font_label
-            text_color: 0x404040
+            text_color: 0x808080
 
         # ── Zeitachse ─────────────────────────────────────────────────────────
         # 48 Slots = 24h, 1 Slot = 30min. Markierungen: 0h, 6h, 12h, 18h, 24h
@@ -602,7 +602,7 @@ lvgl:
             x: 68
             y: 76
             text_font: font_label
-            text_color: 0x383838
+            text_color: 0x707070
         - label:
             id: lbl_time_6
             text: "6"
@@ -610,7 +610,7 @@ lvgl:
             x: 152
             y: 76
             text_font: font_label
-            text_color: 0x383838
+            text_color: 0x707070
         - label:
             id: lbl_time_12
             text: "12"
@@ -618,7 +618,7 @@ lvgl:
             x: 231
             y: 76
             text_font: font_label
-            text_color: 0x383838
+            text_color: 0x707070
         - label:
             id: lbl_time_18
             text: "18"
@@ -626,7 +626,7 @@ lvgl:
             x: 315
             y: 76
             text_font: font_label
-            text_color: 0x383838
+            text_color: 0x707070
         - label:
             id: lbl_time_24
             text: "24"
@@ -634,7 +634,7 @@ lvgl:
             x: 390
             y: 76
             text_font: font_label
-            text_color: 0x383838
+            text_color: 0x707070
 
         # ── Canvas für das Heatmap-Grid ───────────────────────────────────────
         # Rundes Display r=233, Mittelpunkt (233,233).
@@ -656,7 +656,7 @@ lvgl:
             x: 50
             y: 104
             text_font: font_label
-            text_color: 0x606060
+            text_color: 0x909090
             text_line_space: 20
 
         - canvas:
@@ -749,17 +749,17 @@ interval:
 
 
           if (status.find("Running") != std::string::npos || status.find("Forced") != std::string::npos) {
-            arc_color       = lv_color_hex(0xFF6B35);
-            dot_color       = lv_color_hex(0xFF6B35);
-            eco_text_color  = lv_color_hex(0xFF6B35);
+            arc_color       = lv_color_hex(0xFF8C5A);
+            dot_color       = lv_color_hex(0xFF8C5A);
+            eco_text_color  = lv_color_hex(0xFF8C5A);
             lv_obj_set_style_text_color(id(lbl_pump_status),
-              lv_color_hex(0xFF6B35), LV_PART_MAIN);
+              lv_color_hex(0xFF8C5A), LV_PART_MAIN);
           } else if (status.find("Disabled") != std::string::npos) {
-            arc_color       = lv_color_hex(0x505050);
-            dot_color       = lv_color_hex(0x505050);
-            eco_text_color  = lv_color_hex(0x505050);
+            arc_color       = lv_color_hex(0x909090);
+            dot_color       = lv_color_hex(0x909090);
+            eco_text_color  = lv_color_hex(0x909090);
             lv_obj_set_style_text_color(id(lbl_pump_status),
-              lv_color_hex(0x505050), LV_PART_MAIN);
+              lv_color_hex(0x909090), LV_PART_MAIN);
           } else if (status.find("Disinfection") != std::string::npos) {
             arc_color       = lv_color_hex(0xE040FB);
             dot_color       = lv_color_hex(0xE040FB);
@@ -767,11 +767,11 @@ interval:
             lv_obj_set_style_text_color(id(lbl_pump_status),
               lv_color_hex(0xE040FB), LV_PART_MAIN);
           } else {
-            arc_color       = lv_color_hex(0x4A90D9);
+            arc_color       = lv_color_hex(0x5BAAFF);
             dot_color       = lv_color_hex(0xFFFFFF);
-            eco_text_color  = lv_color_hex(0x4A90D9);
+            eco_text_color  = lv_color_hex(0x5BAAFF);
             lv_obj_set_style_text_color(id(lbl_pump_status),
-              lv_color_hex(0x606060), LV_PART_MAIN);
+              lv_color_hex(0x909090), LV_PART_MAIN);
           }
 
           // Arc-Indikatorfarbe (LVGL v8: LV_PART_INDICATOR)
@@ -814,7 +814,7 @@ interval:
           bool enabled = id(hotwater).pump_enabled_;
           lv_label_set_text(id(lbl_enabled), enabled ? "ENABLED" : "DISABLED");
           lv_obj_set_style_text_color(id(lbl_enabled),
-            enabled ? lv_color_hex(0x4A90D9) : lv_color_hex(0x505050),
+            enabled ? lv_color_hex(0x5BAAFF) : lv_color_hex(0x909090),
             LV_PART_MAIN);
 
           // ── WiFi + Smart-Plug (platzsparend) ─────────────────────────────
@@ -867,7 +867,7 @@ interval:
 
             lv_label_set_text(id(lbl_plug), "Plug: --");
             lv_obj_set_style_text_color(id(lbl_plug),
-              lv_color_hex(0x505050), LV_PART_MAIN);
+              lv_color_hex(0x909090), LV_PART_MAIN);
 
             // WiFi aktualisieren
             if (id(wifi_connected)) {
@@ -876,11 +876,11 @@ interval:
               snprintf(rssi_buf, sizeof(rssi_buf), "%d dBm", rssi);
               lv_label_set_text(id(lbl_rssi), rssi_buf);
               lv_obj_set_style_text_color(id(lbl_wifi),
-                lv_color_hex(0x4A90D9), LV_PART_MAIN);
+                lv_color_hex(0x5BAAFF), LV_PART_MAIN);
             } else {
               lv_label_set_text(id(lbl_rssi), "");
               lv_obj_set_style_text_color(id(lbl_wifi),
-                lv_color_hex(0x505050), LV_PART_MAIN);
+                lv_color_hex(0x909090), LV_PART_MAIN);
             }
           }
 
