@@ -63,7 +63,14 @@ external_components:
 
 logger:
   level: INFO
-
+  logs:
+    dallas.temp.sensor: INFO
+    http_request.idf: INFO
+    learning: INFO  # set to debug to show learning matrix in logs
+    hotcirc: INFO
+    hotwater: INFO
+    wifi: INFO
+    
 api:
   reboot_timeout: 600min
 
@@ -102,7 +109,7 @@ captive_portal:
 # HTTP request component for smart plug control
 http_request:
   id: http_client
-  timeout: 2s  # Reduced to prevent watchdog timeout
+  timeout: 1s  # Cap loop stalls when the plug is slow/unreachable (was 2s)
 
 # Global variable to store smart plug IP address (runtime only)
 globals:
@@ -692,6 +699,7 @@ esphome_hotcirc:
   return_sensor: return_temp
   pump_switch: pump_relay
   time_source: sntp_time
+  button: hw_button
   # Note: led_green and led_yellow removed - Display shows status instead
   outlet_rise: 1.0      # Minimum temperature RISE to detect water draw (°C)
                         # Reduced from 1.5 to match slower temperature response in 40cm pipe

@@ -333,7 +333,7 @@ lvgl:
         # ── Flow Temperature (left) ─────────────────────────────────────────
         - label:
             id: lbl_outlet_label
-            text: "FLOW"
+            text: "OUTLET"
             align: CENTER
             x: ${outlet_label_x}
             y: ${outlet_label_y}
@@ -934,6 +934,24 @@ interval:
           const int CH   = 40;  // 7 × 40 = 280px = Canvas-Höhe exakt
           const int GAP  = 0;
 
+          // ── Change-Detection ──────────────────────────────────────────────
+          // Der teure Teil ist die pixelweise Füllung (~94000 set_px-Aufrufe,
+          // ~400ms Loop-Stall). Da sich learn_ nur selten ändert (bei Draw /
+          // taeglichem Decay / ECO-Aenderung), wird hier verglichen und der
+          // Redraw uebersprungen, wenn sich nichts geaendert hat. Der 336-Byte-
+          // Vergleich kostet < 1ms. So entfaellt der wiederkehrende 30s-Stall.
+          static uint8_t last_drawn[7][48];
+          static int     last_eco  = -1;
+          static bool    last_init = false;
+
+          bool changed = !last_init || (eco_threshold != last_eco);
+          if (!changed) {
+            for (int d = 0; d < ROWS && !changed; d++)
+              for (int s = 0; s < COLS; s++)
+                if (id(hotwater).learn_[d][s] != last_drawn[d][s]) { changed = true; break; }
+          }
+          if (!changed) return;   // nichts geaendert -> Buffer behaelt letztes Bild
+
           // Hintergrund löschen
           lv_canvas_fill_bg(canvas, lv_color_hex(0x000000), LV_OPA_COVER);
 
@@ -967,6 +985,13 @@ interval:
               }
             }
           }
+
+          // Snapshot fuer naechsten Vergleich
+          for (int d = 0; d < ROWS; d++)
+            for (int s = 0; s < COLS; s++)
+              last_drawn[d][s] = id(hotwater).learn_[d][s];
+          last_eco  = eco_threshold;
+          last_init = true;
 
 
 # =============================================================================

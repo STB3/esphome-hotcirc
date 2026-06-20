@@ -44,9 +44,28 @@ void HotWaterController::setup() {
   } else {
     ESP_LOGW(TAG, "Yellow LED not configured!");
   }
+
+  // Drive water-draw detection from the outlet sensor's publish callback instead
+  // of polling it in loop(). On this display node loop() is starved by LVGL /
+  // heatmap / WiFi-roam stalls (200-420 ms gaps), which made the poll-based
+  // first-difference detector alias against the sensor's own 1 s publish clock
+  // and miss draws. The callback fires exactly once per published value, at its
+  // true timestamp, so loop jitter no longer affects detection.
+  if (outlet_) {
+    outlet_->add_on_state_callback([this](float v) { this->on_outlet_sample_(v); });
+    ESP_LOGI(TAG, "Water-draw detection bound to outlet sensor callback");
+  } else {
+    ESP_LOGW(TAG, "Outlet sensor not configured - water-draw detection disabled!");
+  }
 }
 
 void HotWaterController::loop() {
+  static uint32_t last = 0;
+  uint32_t now = millis();
+  if (last && now - last > 500)
+    ESP_LOGW("hotcirc", "loop gap %u ms", now - last);
+  last = now;
+  
   if (!clock_ || !clock_->now().is_valid()) {
     pump_control();
     handle_button();
@@ -68,8 +87,9 @@ void HotWaterController::loop() {
   // ALWAYS check anti-stagnation (runs even when pump disabled or in vacation mode)
   check_anti_stagnation_();
   
-  // ALWAYS detect water draws (even in vacation mode - this is how we exit vacation mode)
-  detect_water_draw();
+  // Water-draw detection now runs from the outlet sensor publish callback
+  // (on_outlet_sample_), registered in setup(). It is intentionally NOT called
+  // here anymore so it cannot be starved by loop() stalls on the display node.
   
   // Skip learning, decay, and automatic pump operations in vacation mode
   if (!vacation_mode_) {
@@ -97,8 +117,8 @@ void HotWaterController::loop() {
 }
 
 void HotWaterController::log_learning_matrix_() {
-  ESP_LOGI("hotwater", "Learning matrix (D0=Mon, D1=Tue, D2=Wed, D3=Thu, D4=Fri, D5=Sat, D6=Sun)");
-  ESP_LOGI("hotwater", "30-min slots: AM (0-23 = 00:00-11:59), PM (24-47 = 12:00-23:59)");
+  ESP_LOGD("learning", "Learning matrix (D0=Mon, D1=Tue, D2=Wed, D3=Thu, D4=Fri, D5=Sat, D6=Sun)");
+  ESP_LOGD("learning", "30-min slots: AM (0-23 = 00:00-11:59), PM (24-47 = 12:00-23:59)");
   char line[250];
   const char* day_names[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
   
@@ -108,14 +128,14 @@ void HotWaterController::log_learning_matrix_() {
     for (int slot = 0; slot < 24; slot++) {
       pos += snprintf(line + pos, sizeof(line) - pos, " %3d", learn_[d][slot]);
     }
-    ESP_LOGI("hotwater", "%s", line);
+    ESP_LOGD("learning", "%s", line);
     
     // PM slots (24-47 = 12:00-23:59)
     pos = snprintf(line, sizeof(line), "%s-PM:", day_names[d]);
     for (int slot = 24; slot < 48; slot++) {
       pos += snprintf(line + pos, sizeof(line) - pos, " %3d", learn_[d][slot]);
     }
-    ESP_LOGI("hotwater", "%s", line);
+    ESP_LOGD("learning", "%s", line);
   }
 }
 
@@ -129,6 +149,8 @@ void HotWaterController::log_learning_matrix_() {
  * 5. Must persist for 15+ seconds with accumulated rise >= threshold (1.5°C default)
  * 6. Logic: Detect sustained rate >= 0.015°C/s, accumulate over 15s to reach threshold
  */
+// DEPRECATED: poll-based detector, kept for reference. No longer called from
+// loop() - detection now runs in on_outlet_sample_() via the sensor callback.
 void HotWaterController::detect_water_draw() {
   if (!outlet_) return;
 
@@ -252,6 +274,116 @@ void HotWaterController::reset_water_draw_detection_() {
 }
 
 /**
+ * Callback-driven water-draw detection.
+ *
+ * Registered in setup() via outlet_->add_on_state_callback(). It is invoked
+ * exactly once per published outlet reading (~1 s, the dallas update_interval),
+ * at the moment of publish, regardless of how badly loop() is stalled by the
+ * display, the heatmap redraw, or WiFi roam scans. This removes the aliasing
+ * between the old poll clock and the sensor's publish clock that caused draws
+ * to be missed on the UEDX4646 node.
+ *
+ * Differences from the old poll-based detect_water_draw():
+ *   - No internal 1 s throttle (the publish cadence IS the clock).
+ *   - A NaN sample (transient one-wire CRC dropout) is ignored rather than
+ *     tearing down an in-progress detection.
+ *   - A single negative step (quantization dip on a slow, filtered rise) no
+ *     longer resets tracking; only real cumulative regression (total_rise <
+ *     -0.1 C) or a 30 s stall does. This keeps the existing 0.03 C / 0.010 C/s
+ *     gates working on noisy slow rises.
+ */
+void HotWaterController::on_outlet_sample_(float t_now) {
+  if (!outlet_) return;
+
+  // Don't detect draws while the pump is running (pump itself raises outlet temp)
+  if (pump_running_) { reset_water_draw_detection_(); return; }
+
+  // Anti-stagnation lockout: suppress detection for 30 min after a stagnation run
+  if (last_anti_stagnation_run_ != 0 && clock_ && clock_->now().is_valid()) {
+    time_t now = clock_->now().timestamp;
+    if (now - last_anti_stagnation_run_ < 1800) {
+      reset_water_draw_detection_();
+      return;
+    }
+  }
+
+  uint32_t now_ms = millis();
+
+  // Transient CRC dropout on the bit-banged bus: skip this sample, keep state.
+  // Note: last_outlet_check_ is intentionally NOT updated, so the next valid
+  // reading simply spans a longer (correctly normalized) interval.
+  if (std::isnan(t_now)) return;
+
+  // First valid reading: arm the reference
+  if (std::isnan(this->last_outlet_value_)) {
+    this->last_outlet_value_ = t_now;
+    this->last_outlet_check_ = now_ms;
+    this->draw_detection_started_ = 0;
+    this->draw_detected_ = false;
+    ESP_LOGD("hotwater", "Initialized outlet tracking: %.2f°C", t_now);
+    return;
+  }
+
+  uint32_t elapsed_ms = now_ms - this->last_outlet_check_;
+  if (elapsed_ms < 250) return;  // guard against pathological bursts; publishes are ~1 s
+
+  float delta = t_now - this->last_outlet_value_;
+  float rate  = delta / (elapsed_ms / 1000.0f);  // °C/s
+
+  ESP_LOGV("hotwater", "Outlet: %.2f°C, delta=%.3f°C, elapsed=%.1fs, rate=%.3f°C/s",
+           t_now, delta, elapsed_ms / 1000.0f, rate);
+
+  if (rate >= 0.010f && delta > 0.03f) {
+    if (this->draw_detection_started_ == 0) {
+      this->draw_detection_started_ = now_ms;
+      this->initial_draw_temp_      = t_now;
+      ESP_LOGI("hotwater", "Potential water draw started (T=%.2f°C, delta=%.3f°C, rate=%.3f°C/s)",
+               t_now, delta, rate);
+    }
+
+    float total_rise = t_now - this->initial_draw_temp_;
+    uint32_t draw_duration_ms = now_ms - this->draw_detection_started_;
+
+    if (draw_duration_ms >= MINIMUM_DRAW_DURATION && !this->draw_detected_) {
+      if (total_rise >= temp_rise_threshold_) {
+        float avg_rate = total_rise / (draw_duration_ms / 1000.0f);
+        ESP_LOGI("hotwater",
+                 "[WATER DRAW] Water draw CONFIRMED! Duration=%.1fs, Total rise=%.2f°C, avg rate=%.3f°C/s",
+                 draw_duration_ms / 1000.0f, total_rise, avg_rate);
+        this->draw_detected_ = true;
+        this->handle_user_request();
+      } else {
+        ESP_LOGD("hotwater", "Duration OK (%.1fs) but total rise insufficient (%.2f°C < %.2f°C threshold)",
+                 draw_duration_ms / 1000.0f, total_rise, temp_rise_threshold_);
+      }
+    } else if (draw_duration_ms < MINIMUM_DRAW_DURATION) {
+      ESP_LOGV("hotwater", "Draw in progress... %.1fs elapsed, rise so far: %.2f°C",
+               draw_duration_ms / 1000.0f, total_rise);
+    }
+  } else {
+    // Rise paused or reversed.
+    if (this->draw_detection_started_ != 0 && !this->draw_detected_) {
+      uint32_t duration_ms = now_ms - this->draw_detection_started_;
+      float total_rise = t_now - this->initial_draw_temp_;
+      // ROBUSTNESS: do NOT reset on a single negative step. Only give up on real
+      // cumulative regression or a long stall without confirmation.
+      if (total_rise < -0.1f || duration_ms > 30000) {
+        ESP_LOGD("hotwater", "Draw detection reset (rate=%.3f°C/s, delta=%.3f°C, duration: %.1fs, total_rise: %.2f°C)",
+                 rate, delta, duration_ms / 1000.0f, total_rise);
+        reset_water_draw_detection_();
+      }
+      // Otherwise keep tracking through brief pauses in the rise.
+    } else if (this->draw_detected_ && rate < -0.01f) {
+      ESP_LOGD("hotwater", "Water draw ended (temp falling, rate=%.3f°C/s)", rate);
+      reset_water_draw_detection_();
+    }
+  }
+
+  this->last_outlet_value_ = t_now;
+  this->last_outlet_check_ = now_ms;
+}
+
+/**
  * Check for vacation mode: enters when no water draw detected for 24 hours
  * In vacation mode, all activities except water draw detection are suspended:
  * - No learning
@@ -335,7 +467,12 @@ void HotWaterController::check_anti_stagnation_() {
   
   // Initialize tracking on first run
   if (last_anti_stagnation_run_ == 0) {
-    last_anti_stagnation_run_ = now;
+    // Backdate the reference so the 30-minute post-run lockout is NOT active at
+    // boot. This is only a scheduler reference point, not an actual anti-stagnation
+    // run - setting it to `now` previously suppressed water-draw detection AND
+    // scheduled runs for 30 minutes after every boot (see the < 1800 lockout
+    // checks in on_outlet_sample_() and check_schedule()).
+    last_anti_stagnation_run_ = (now > 3600) ? (now - 3600) : 1;
     ESP_LOGI(TAG, "[ANTI-STAGNATION] Initialized - will run every Sunday at 03:00 AM when needed");
     return;
   }
@@ -617,6 +754,7 @@ void HotWaterController::decay_table() {
   ESP_LOGI(TAG, "Learning matrix decayed");
   
   // Save updated matrix to flash at end of each day
+  ESP_LOGI(TAG, "Learning matrix save by daily trigger.");
   save_learning_matrix_();
 }
 

@@ -191,8 +191,10 @@ class HotWaterController : public Component {
   void stop_pump(const char *reason);
 
  protected:
-  void detect_water_draw();              // Detects temperature RISE (correct for this system)
+  void detect_water_draw();              // DEPRECATED: poll-based, replaced by on_outlet_sample_()
                                          // IMPORTANT: Suspended while pump_running_ to prevent false learning
+  void on_outlet_sample_(float t_now);   // Callback-driven draw detection (fed by outlet sensor publish)
+                                         // Immune to loop() starvation on the display node
   void reset_water_draw_detection_();    // Resets draw detection state
   void detect_disinfection_cycle_();     // Detects boiler disinfection by monitoring outlet temp
   void check_vacation_mode_();           // Check if entering/exiting vacation mode
