@@ -134,6 +134,7 @@ class HotWaterController : public Component {
   float baseline_outlet_{NAN};           // Baseline outlet temp for disinfection detection
   time_t last_water_draw_time_{0};       // Timestamp of last detected water draw
   bool vacation_mode_{false};            // True when no water draw for 24h
+  bool draw_pending_{false};			 // True in case potential water draw detected
 
   // Pump control state
   bool pump_running_{false};

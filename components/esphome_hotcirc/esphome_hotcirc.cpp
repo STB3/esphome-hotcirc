@@ -271,6 +271,7 @@ void HotWaterController::reset_water_draw_detection_() {
   this->draw_detection_started_ = 0;
   this->draw_detected_ = false;
   this->initial_draw_temp_ = NAN;
+  this->draw_pending_ = false; 
 }
 
 /**
@@ -337,6 +338,7 @@ void HotWaterController::on_outlet_sample_(float t_now) {
     if (this->draw_detection_started_ == 0) {
       this->draw_detection_started_ = now_ms;
       this->initial_draw_temp_      = t_now;
+	  this->draw_pending_			= true;
       ESP_LOGI("hotwater", "Potential water draw started (T=%.2f°C, delta=%.3f°C, rate=%.3f°C/s)",
                t_now, delta, rate);
     }

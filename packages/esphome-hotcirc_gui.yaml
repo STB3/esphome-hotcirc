@@ -707,6 +707,13 @@ interval:
           } else {
             lv_label_set_text(id(lbl_outlet_temp), "--.-°");
           }
+          // NEU: Outlet-Farbe bei potentiellem Wasserbezug gelb färben
+          lv_obj_set_style_text_color(
+            id(lbl_outlet_temp),
+            id(hotwater).draw_pending_
+              ? lv_color_hex(0xFFD700)   // Gelb: potential water draw aktiv
+              : lv_color_hex(0xFFFFFF),  // Weiß: Normalzustand
+            LV_PART_MAIN);
 
           // ── Return Temp (klein rechts) ────────────────────────────────────
           if (!isnan(id(return_temp).state)) {
