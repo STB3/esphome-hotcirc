@@ -506,14 +506,21 @@ lvgl:
             shadow_width: 0
             radius: 0
             on_click:
-              - lambda: id(on_heatmap_page) = !id(on_heatmap_page);
+              # Weck-Tap? -> Aktion schlucken (Wecken passiert im on_touch).
               - if:
                   condition:
-                    lambda: 'return id(on_heatmap_page);'
+                    lambda: 'return id(swallow_click);'
                   then:
-                    - lvgl.page.show: page_heatmap
+                    - lambda: 'id(swallow_click) = false;'
                   else:
-                    - lvgl.page.show: page_main
+                    - lambda: id(on_heatmap_page) = !id(on_heatmap_page);
+                    - if:
+                        condition:
+                          lambda: 'return id(on_heatmap_page);'
+                        then:
+                          - lvgl.page.show: page_heatmap
+                        else:
+                          - lvgl.page.show: page_main
 
         # ── Touch-Zone: Unten – Smart-Plug testen ────────────────────────────
         - button:
@@ -531,7 +538,14 @@ lvgl:
             shadow_width: 0
             radius: 0
             on_click:
-              - script.execute: test_smart_plug_script
+              # Weck-Tap? -> Aktion schlucken (Wecken passiert im on_touch).
+              - if:
+                  condition:
+                    lambda: 'return id(swallow_click);'
+                  then:
+                    - lambda: 'id(swallow_click) = false;'
+                  else:
+                    - script.execute: test_smart_plug_script
 
     # =========================================================================
     #  SEITE 2: Lernmatrix Heatmap
@@ -678,8 +692,15 @@ lvgl:
             bg_opa: TRANSP
             border_width: 0
             on_click:
-              - lambda: id(on_heatmap_page) = false;
-              - lvgl.page.show: page_main
+              # Weck-Tap? -> Aktion schlucken (Wecken passiert im on_touch).
+              - if:
+                  condition:
+                    lambda: 'return id(swallow_click);'
+                  then:
+                    - lambda: 'id(swallow_click) = false;'
+                  else:
+                    - lambda: id(on_heatmap_page) = false;
+                    - lvgl.page.show: page_main
 
 
 # =============================================================================
@@ -755,7 +776,16 @@ interval:
           lv_color_t eco_text_color;
 
 
-          if (status.find("Running") != std::string::npos || status.find("Forced") != std::string::npos) {
+          // WICHTIG: Disinfection ZUERST pruefen. pump_status liefert bei der
+          // Desinfektion "Running: Disinfection" – enthaelt also auch "Running".
+          // Stuende der Running-Zweig vorne, wuerde Disinfection nie lila werden.
+          if (status.find("Disinfection") != std::string::npos) {
+            arc_color       = lv_color_hex(0xE040FB);
+            dot_color       = lv_color_hex(0xE040FB);
+            eco_text_color  = lv_color_hex(0xE040FB);
+            lv_obj_set_style_text_color(id(lbl_pump_status),
+              lv_color_hex(0xE040FB), LV_PART_MAIN);
+          } else if (status.find("Running") != std::string::npos || status.find("Forced") != std::string::npos) {
             arc_color       = lv_color_hex(0xFF8C5A);
             dot_color       = lv_color_hex(0xFF8C5A);
             eco_text_color  = lv_color_hex(0xFF8C5A);
@@ -767,12 +797,6 @@ interval:
             eco_text_color  = lv_color_hex(0x909090);
             lv_obj_set_style_text_color(id(lbl_pump_status),
               lv_color_hex(0x909090), LV_PART_MAIN);
-          } else if (status.find("Disinfection") != std::string::npos) {
-            arc_color       = lv_color_hex(0xE040FB);
-            dot_color       = lv_color_hex(0xE040FB);
-            eco_text_color  = lv_color_hex(0xE040FB);
-            lv_obj_set_style_text_color(id(lbl_pump_status),
-              lv_color_hex(0xE040FB), LV_PART_MAIN);
           } else {
             arc_color       = lv_color_hex(0x5BAAFF);
             dot_color       = lv_color_hex(0xFFFFFF);
@@ -786,11 +810,19 @@ interval:
           // Dot-Hintergrundfarbe
           lv_obj_set_style_bg_color(id(dot_indicator), dot_color, LV_PART_MAIN);
           // Pumpen-Icon: passendes vorgerenderte Farb-Layer einblenden
-          bool p_run      = status.find("Running") != std::string::npos
-                         || status.find("Forced")  != std::string::npos;
-          bool p_dis      = status.find("Disabled")     != std::string::npos;
-          bool p_disinfect= status.find("Disinfection")  != std::string::npos;
-          if (p_run)       { // Frames werden vom anim_pump-Intervall gesteuert;
+          // Disinfection hat Vorrang: "Running: Disinfection" -> lila, NICHT gruen.
+          bool p_disinfect= status.find("Disinfection") != std::string::npos;
+          bool p_run      = (status.find("Running") != std::string::npos
+                         ||  status.find("Forced")  != std::string::npos)
+                         &&  !p_disinfect;
+          bool p_dis      = status.find("Disabled")  != std::string::npos;
+          if (p_disinfect) { lv_obj_clear_flag(id(img_pump_disinfect),LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_idle),      LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f0),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f1),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_run_f2),   LV_OBJ_FLAG_HIDDEN);
+                             lv_obj_add_flag  (id(img_pump_dis),      LV_OBJ_FLAG_HIDDEN); }
+          else if (p_run)  { // Frames werden vom anim_pump-Intervall gesteuert;
                              // hier nur idle/dis/disinfect ausblenden
                              lv_obj_add_flag  (id(img_pump_idle),      LV_OBJ_FLAG_HIDDEN);
                              lv_obj_add_flag  (id(img_pump_dis),       LV_OBJ_FLAG_HIDDEN);
@@ -801,12 +833,6 @@ interval:
                              lv_obj_add_flag  (id(img_pump_run_f1),   LV_OBJ_FLAG_HIDDEN);
                              lv_obj_add_flag  (id(img_pump_run_f2),   LV_OBJ_FLAG_HIDDEN);
                              lv_obj_add_flag  (id(img_pump_disinfect),LV_OBJ_FLAG_HIDDEN); }
-          else if (p_disinfect){ lv_obj_clear_flag(id(img_pump_disinfect),LV_OBJ_FLAG_HIDDEN);
-                             lv_obj_add_flag  (id(img_pump_idle),      LV_OBJ_FLAG_HIDDEN);
-                             lv_obj_add_flag  (id(img_pump_run_f0),   LV_OBJ_FLAG_HIDDEN);
-                             lv_obj_add_flag  (id(img_pump_run_f1),   LV_OBJ_FLAG_HIDDEN);
-                             lv_obj_add_flag  (id(img_pump_run_f2),   LV_OBJ_FLAG_HIDDEN);
-                             lv_obj_add_flag  (id(img_pump_dis),      LV_OBJ_FLAG_HIDDEN); }
           else             { lv_obj_clear_flag(id(img_pump_idle),      LV_OBJ_FLAG_HIDDEN);
                              lv_obj_add_flag  (id(img_pump_run_f0),   LV_OBJ_FLAG_HIDDEN);
                              lv_obj_add_flag  (id(img_pump_run_f1),   LV_OBJ_FLAG_HIDDEN);
@@ -901,8 +927,11 @@ interval:
     then:
       - lambda: |-
           std::string status = id(pump_status).state;
-          bool p_run = status.find("Running") != std::string::npos
-                    || status.find("Forced")  != std::string::npos;
+          // Disinfection laeuft zwar als "Running: Disinfection", soll aber das
+          // statische lila Icon behalten -> hier NICHT animieren.
+          bool p_run = (status.find("Running") != std::string::npos
+                    ||  status.find("Forced")  != std::string::npos)
+                    &&  status.find("Disinfection") == std::string::npos;
           if (!p_run) return;
           // advance frame
           id(anim_frame) = (id(anim_frame) + 1) % 3;

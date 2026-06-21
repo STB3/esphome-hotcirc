@@ -1,0 +1,190 @@
+# =============================================================================
+#  esphome-hotcirc_dimming.yaml  --  3-Stufen Display-Dimming / AMOLED-Schutz
+# =============================================================================
+#  Hardware:  UEDX4646 (CO5300, AMOLED, rund 466x466)
+#  Zweck:     Einbrennschutz durch Absenken der mittleren Leuchtdichte.
+#
+#  Stufen (gesteuert ueber LVGL-Inaktivitaetszeit):
+#    Stufe 0  AKTIV   – volle Helligkeit (= "Display Brightness"-Regler)
+#    Stufe 1  DIM     – nach ${dim_delay_ms} ms: gedimmt, Inhalt LAEUFT WEITER
+#                       (Temperaturen aktualisieren live, nichts eingefroren)
+#    Stufe 2  DARK    – nach ${dark_delay_ms} ms: Helligkeit ~0 (Screensaver)
+#
+#  Aufwecken / "erster Tap weckt nur":
+#    LVGL laeuft durchgehend (kein pause), damit die Temperaturen im Dim-
+#    Zustand live bleiben. Das Schlucken des ersten Taps passiert in den
+#    Touch-Buttons selbst: deren on_click ist in esphome-hotcirc_gui.yaml so
+#    gekapselt, dass sie im Dim/Dark-Zustand NUR aufwecken
+#    (script: hotcirc_display_wake) und ihre eigentliche Aktion erst beim
+#    naechsten Tap ausfuehren. Die beiden Buttons decken die ganze Seite ab,
+#    daher weckt jede Beruehrung zuverlaessig auf.
+#
+#  Aufwecken zusaetzlich automatisch:
+#    - Pumpenstart (steigende Flanke pump_running_) weckt das Display
+#      (im 1s-Manager unten; re-dimmt 30 s nach dem letzten Input wieder).
+#
+#  -------------------------------------------------------------------------
+#  EINBINDUNG  (in esphome-hotcirc_uedx4646.yaml):
+#      packages:
+#        gui:      !include packages\esphome-hotcirc_gui.yaml
+#        dimming:  !include packages\esphome-hotcirc_dimming.yaml   # <-- NEU
+#
+#  KLEINE Eingriffe in der Hauptdatei (fuer Button-/Encoder-Wake) – siehe
+#  Patch-Snippets in der Begleitnachricht: hw_button on_click und die beiden
+#  rotary_encoder-Handler rufen hotcirc_display_wake auf.
+#
+#  Referenzierte IDs aus den anderen Dateien:
+#    disp1               (display, mipi_spi)
+#    display_brightness  (number, 10..255 – dein Aktiv-Helligkeitswert)
+#  Bereitgestellt fuer die GUI-Datei:
+#    disp_stage          (global int)
+#    hotcirc_display_wake(script)
+#    dark_mode_enable    (switch – DARK-Stufe ein/aus, Web-/HA-UI)
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+#  TUNING  – hier zentral anpassen
+# -----------------------------------------------------------------------------
+substitutions:
+  dim_delay_ms:    "30000"    # Inaktivitaet bis Stufe 1 (DIM)   – 30 s
+  dark_delay_ms:   "300000"   # Inaktivitaet bis Stufe 2 (DARK)  – 5 min
+  dim_factor:      "0.25"     # DIM-Helligkeit = Aktiv * Faktor
+  dim_floor:       "8"        # DIM nie unter diesen Wert (Panel-Minimum)
+  dark_brightness: "0"        # DARK-Helligkeit (0 = praktisch aus; bei
+                              #   Bedarf 2..5, falls Panel bei 0 nicht ganz
+                              #   schwarz wird)
+
+
+# -----------------------------------------------------------------------------
+#  GLOBALS
+# -----------------------------------------------------------------------------
+globals:
+  # 0 = aktiv, 1 = gedimmt, 2 = dark
+  - id: disp_stage
+    type: int
+    restore_value: no
+    initial_value: '0'
+  # Vorheriger Pumpenzustand fuer Flankenerkennung (Pumpenstart -> wecken)
+  - id: last_pump_running
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  # Zeitstempel der letzten Aktivitaet (millis). Wird bei JEDER Beruehrung
+  # (touchscreen on_touch, schon beim Druck), bei Encoder/Button und beim
+  # Aufwecken gesetzt. Ersetzt die unzuverlaessige LVGL-Inaktivitaetszeit.
+  - id: last_active_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  # Wird vom touchscreen on_touch gesetzt, wenn ein Druck NUR aufwecken soll.
+  # Der LVGL-Button-Klick prueft dieses Flag und schluckt dann seine Aktion.
+  - id: swallow_click
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+
+# -----------------------------------------------------------------------------
+#  UI-SCHALTER  – DARK-Stufe (Screensaver) ein-/ausschalten
+# -----------------------------------------------------------------------------
+#  ON  (Default): Ablauf wie gehabt  AKTIV -> DIM -> DARK.
+#  OFF:           Display bleibt nach dim_delay dauerhaft auf Stufe 1 (DIM),
+#                 geht nie ganz schwarz. Inhalt laeuft live weiter.
+#  Beim Ausschalten waehrend laufendem DARK wird sofort auf DIM angehoben.
+#  Erscheint im Web-/HA-UI neben "Display Brightness".
+# -----------------------------------------------------------------------------
+switch:
+  - platform: template
+    name: "Display Dark Mode"
+    id: dark_mode_enable
+    icon: "mdi:brightness-2"
+    entity_category: config
+    restore_mode: RESTORE_DEFAULT_ON   # Default: DARK aktiv (bisheriges Verhalten)
+    optimistic: true
+    turn_on_action:
+      - lambda: |-
+          ESP_LOGD("dim", "DARK-Stufe aktiviert");
+    turn_off_action:
+      - lambda: |-
+          ESP_LOGD("dim", "DARK-Stufe deaktiviert");
+          // Falls gerade DARK aktiv ist: auf DIM anheben, nicht schwarz lassen.
+          if (id(disp_stage) == 2) {
+            id(hotcirc_enter_dim).execute();
+          }
+
+
+# -----------------------------------------------------------------------------
+#  STUFEN-MANAGER  – prueft 1x/s die Inaktivitaetszeit (eigener millis-Timer)
+# -----------------------------------------------------------------------------
+#  inactive = millis() - last_active_ms. last_active_ms wird beim Druck
+#  (touchscreen on_touch) gesetzt -> waehrend einer Beruehrung kann der
+#  Manager die Stufe nicht umschalten, der Button-Guard liest beim Klick
+#  also immer den korrekten disp_stage. Kein Re-Dim-Flackern mehr.
+# -----------------------------------------------------------------------------
+interval:
+  - interval: 1s
+    id: hotcirc_dim_manager
+    then:
+      - lambda: |-
+          // Pumpenstart (steigende Flanke) -> Display wecken
+          bool running = id(hotwater).pump_running_;
+          if (running && !id(last_pump_running)) {
+            id(hotcirc_display_wake).execute();
+          }
+          id(last_pump_running) = running;
+
+          uint32_t inactive = millis() - id(last_active_ms);
+          int stage = id(disp_stage);
+          if (stage == 0 && inactive >= (uint32_t)${dim_delay_ms}) {
+            id(hotcirc_enter_dim).execute();
+          } else if (stage == 1 && inactive >= (uint32_t)${dark_delay_ms}) {
+            // DARK nur, wenn der UI-Schalter es erlaubt. Sonst bleibt das
+            // Display dauerhaft auf Stufe 1 (DIM) – Inhalt laeuft live weiter.
+            if (id(dark_mode_enable).state) {
+              id(hotcirc_enter_dark).execute();
+            }
+          }
+
+
+# -----------------------------------------------------------------------------
+#  SKRIPTE
+# -----------------------------------------------------------------------------
+script:
+  # ── Stufe 1: DIM ──  Helligkeit absenken, Inhalt laeuft live weiter
+  - id: hotcirc_enter_dim
+    mode: single
+    then:
+      - lambda: |-
+          float active = id(display_brightness).state;
+          if (isnan(active) || active <= 0) active = 64;   // Fallback
+          float dimv = active * (float)${dim_factor};
+          if (dimv < (float)${dim_floor}) dimv = (float)${dim_floor};
+          id(disp1).set_brightness(dimv);
+          id(disp_stage) = 1;
+          ESP_LOGD("dim", "-> DIM (brightness=%.0f)", dimv);
+
+  # ── Stufe 2: DARK ──  Helligkeit auf ~0 (Screensaver)
+  - id: hotcirc_enter_dark
+    mode: single
+    then:
+      - lambda: |-
+          id(disp1).set_brightness((float)${dark_brightness});
+          id(disp_stage) = 2;
+          ESP_LOGD("dim", "-> DARK");
+
+  # ── Aufwecken ──  von den gekapselten Touch-Buttons / Encoder / Button /
+  #  Pumpenstart aufgerufen. Aktualisiert IMMER last_active_ms (haelt wach)
+  #  und stellt – falls geschlafen – die volle Helligkeit wieder her.
+  - id: hotcirc_display_wake
+    mode: single
+    then:
+      - lambda: |-
+          id(last_active_ms) = millis();
+          if (id(disp_stage) != 0) {
+            float active = id(display_brightness).state;
+            if (isnan(active) || active <= 0) active = 64;
+            id(disp1).set_brightness(active);
+            ESP_LOGD("dim", "-> WAKE (from stage=%d, brightness=%.0f)", id(disp_stage), active);
+            id(disp_stage) = 0;
+          }

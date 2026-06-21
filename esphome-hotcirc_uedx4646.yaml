@@ -53,7 +53,8 @@ psram:
 # ESPHome fuehrt die Pakete vor der Validierung zusammen, daher koennen
 # beide Dateien gegenseitig auf IDs zugreifen (z. B. disp1, outlet_temp).
 packages:
-  gui: !include packages\esphome-hotcirc_gui.yaml
+  gui:     !include packages\esphome-hotcirc_gui.yaml
+  dimming: !include packages\esphome-hotcirc_dimming.yaml
 
 external_components:
   - source:
@@ -70,6 +71,7 @@ logger:
     hotcirc: INFO
     hotwater: INFO
     wifi: INFO
+    dim: INFO
     
 api:
   reboot_timeout: 600min
@@ -243,6 +245,10 @@ sensor:
     internal: true
     on_clockwise:
       - lambda: |-
+          // Display schlaeft? -> nur aufwecken, diesen Schritt ignorieren
+          if (id(disp_stage) != 0) { id(hotcirc_display_wake).execute(); return; }
+          // Wach: Drehen haelt das Display wach
+          id(last_active_ms) = millis();
           // Debounce: Events innerhalb 50ms nach letztem Event ignorieren
           unsigned long now = millis();
           if (now - id(last_encoder_value) < 50) return;
@@ -254,6 +260,10 @@ sensor:
           ESP_LOGI("encoder", "ECO+ → %.0f", new_eco);
     on_anticlockwise:
       - lambda: |-
+          // Display schlaeft? -> nur aufwecken, diesen Schritt ignorieren
+          if (id(disp_stage) != 0) { id(hotcirc_display_wake).execute(); return; }
+          // Wach: Drehen haelt das Display wach (Inaktivitaet zuruecksetzen)
+          id(last_active_ms) = millis();
           unsigned long now = millis();
           if (now - id(last_encoder_value) < 50) return;
           id(last_encoder_value) = now;
@@ -586,11 +596,25 @@ touchscreen:
   platform: cst816
   id: my_touchscreen
   display: disp1
-#  interrupt_pin: GPIO4
+  # WICHTIG: Interrupt-Leitung aktiviert. Ohne sie wird der cst816 nur alle
+  # 50ms gepollt (kurze Taps gehen verloren) und der erste Tap aus dem Standby
+  # weckt nur den Controller, ohne ein Event zu melden -> "mehrere Touches".
+  # Falls Touch danach GAR NICHT mehr reagiert, ist GPIO4 auf deinem Board
+  # falsch: dann diese Zeile wieder auskommentieren und Pin im Schaltplan pruefen.
+  interrupt_pin: GPIO4
   reset_pin: GPIO2
   update_interval: 50ms
-  # Touch wird direkt von LVGL ausgewertet; Interaktion über Button-Widgets
-  # mit on_click in esphome-hotcirc_gui.yaml (siehe lvgl:-Block).
+  on_touch:
+    - lambda: |-
+        id(last_active_ms) = millis();
+        if (id(disp_stage) != 0) {
+          // War gedimmt/dark: hier ZUVERLAESSIG aufwecken (nicht ueber den
+          // unzuverlaessigen LVGL on_click) und den zugehoerigen Klick schlucken.
+          id(hotcirc_display_wake).execute();
+          id(swallow_click) = true;
+        } else {
+          id(swallow_click) = false;   // wach: normaler Klick soll wirken
+        }
 
 binary_sensor:
   - platform: gpio
@@ -608,6 +632,8 @@ binary_sensor:
       max_length: 1000ms
       then:
         - lambda: |-
+            // Display sofort wecken UND Aktion direkt ausfuehren (kein 2. Druck)
+            id(hotcirc_display_wake).execute();
             ESP_LOGI("button", "HW button - run pump");
             id(hotwater).run_pump();
 
