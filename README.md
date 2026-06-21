@@ -418,19 +418,49 @@ The hardware button supports three press durations:
 esphome-hotcirc/
   components/
     esphome_hotcirc/
-      __init__.py              # ESPHome config schema and code generation
-      esphome_hotcirc.h         # HotWaterController class definition
-      esphome_hotcirc.cpp       # Core logic implementation
-  esphome-hotcirc_m5stickc-plus2.yaml   # M5StickC Plus2 variant
-  esphome-hotcirc_red.yaml              # Red / ESP32-C6 variant
-  esphome-hotcirc_uedx4646.yaml         # UEDX4646 round display variant
-  ESPHome_HotCirc_heatmap_ha_style.html # Learning matrix heatmap visualization
-  secrets.yaml                         # WiFi credentials and paths (not committed)
+      __init__.py                          # ESPHome config schema and code generation
+      esphome_hotcirc.h                     # HotWaterController class definition
+      esphome_hotcirc.cpp                   # Core logic implementation
+  packages/
+    esphome-hotcirc_gui.yaml               # LVGL GUI package (UEDX4646 round display)
+    esphome-hotcirc_dimming.yaml           # Display dimming / brightness package
+    pump_icon.png                          # Pump icon (static)
+    pump_icon_f0.png                        # Pump icon animation frame 0
+    pump_icon_f1.png                        # Pump icon animation frame 1
+    pump_icon_f2.png                        # Pump icon animation frame 2
+    pump_icon.xcf                           # GIMP source for the pump icon
+    link.txt                               # Reference link(s)
+    bak/                                    # Backups of GUI package and icons
+  pictures/
+    heatmap.png                            # Heatmap screenshot
+    Homeassistant.png                       # Home Assistant integration screenshot
+    hotcirc_m5stickc-plus/                 # M5StickC Plus2 photos
+    hotcirc_red/                           # Red / ESP32-C6 photos + schematic PDF
+    hotcirc_uedx4646/                      # UEDX4646 photos, schematic, display states
+      States/                              # Rendered display state images (standby, running, ...)
+  esphome-hotcirc_m5stickc-plus2.yaml      # M5StickC Plus2 variant
+  esphome-hotcirc_red.yaml                 # Red / ESP32-C6 variant
+  esphome-hotcirc_red_ibom.html            # Interactive BOM for the Red PCB
+  esphome-hotcirc_uedx4646.yaml            # UEDX4646 round display variant
+  ESPHome_HotCirc_heatmap_ha_style.html    # Learning matrix heatmap visualization
+  secrets.yaml                             # WiFi credentials and paths (not committed)
+  .gitignore
+  baumstruktur.txt                         # Directory tree snapshot
 ```
 
 ### Core Component
 
 The `esphome_hotcirc` custom component (`components/esphome_hotcirc/`) implements the `HotWaterController` class. It runs as a standard ESPHome `Component` with a `loop()` method that executes the detection, learning, scheduling, and pump control logic every iteration.
+
+### GUI Packages
+
+The UEDX4646 variant pulls in reusable packages from `packages/`:
+
+- `esphome-hotcirc_gui.yaml` - the LVGL-based GUI (Nest-inspired round UI, ECO arc, pump icon animation, heatmap page, touch zones)
+- `esphome-hotcirc_dimming.yaml` - display brightness / dimming behaviour
+- `pump_icon_f0.png` / `pump_icon_f1.png` / `pump_icon_f2.png` - the three animation frames for the pump icon (with `pump_icon.xcf` as the editable GIMP source)
+
+A `bak/` subfolder keeps previous versions of the GUI package and icon assets.
 
 Key internal constants:
 
