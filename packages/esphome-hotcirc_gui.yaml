@@ -149,6 +149,22 @@ image:
     type: BINARY
     resize: 85x85
 
+# === State-Hintergruende (radialer Glow, RGB565) ============================
+#  Je ein 466x466-Glow pro Betriebszustand. Liegen als unterste Z-Ebene auf
+#  page_main; in update_gui wird zustandsabhaengig genau einer eingeblendet
+#  (show/hide wie bei den Pump-Icons). Disabled -> keiner sichtbar (Schwarz).
+#  Roh-Flash: ~424 KB pro Bild (466*466*2). Bei Flash-Knappheit: resize auf
+#  233x233 und im Widget per zoom: 512 hochziehen (spart ~75 %).
+  - file: packages/bg_idle_blue.png
+    id: bg_idle_blue
+    type: RGB565
+  - file: packages/bg_running_orange.png
+    id: bg_running_orange
+    type: RGB565
+  - file: packages/bg_disinfection_magenta.png
+    id: bg_disinfection_magenta
+    type: RGB565
+
 # === QSPI-Bus ================================================================
 spi:
   id: display_qspi
@@ -248,6 +264,31 @@ lvgl:
       bg_opa: COVER
 
       widgets:
+
+        # ── State-Hintergruende (unterste Z-Ebene, nur einer sichtbar) ────────
+        #  Reihenfolge = Z-Order: zuerst erstellt = ganz hinten. Muss daher VOR
+        #  arc_bg stehen, damit der Glow hinter Arcs/Text/Icons liegt.
+        #  Default sichtbar: blau (Idle). Umschaltung in update_gui.
+        - image:
+            id: img_bg_blue
+            src: bg_idle_blue
+            align: CENTER
+            x: 0
+            y: 0
+        - image:
+            id: img_bg_orange
+            src: bg_running_orange
+            align: CENTER
+            x: 0
+            y: 0
+            hidden: true
+        - image:
+            id: img_bg_magenta
+            src: bg_disinfection_magenta
+            align: CENTER
+            x: 0
+            y: 0
+            hidden: true
 
         # ── Hintergrund-Arc (grau, 300° Bogen, Lücke 60° unten) ───────────────
         - arc:
@@ -785,24 +826,40 @@ interval:
             eco_text_color  = lv_color_hex(0xE040FB);
             lv_obj_set_style_text_color(id(lbl_pump_status),
               lv_color_hex(0xE040FB), LV_PART_MAIN);
+            // Hintergrund: magenta-Glow
+            lv_obj_add_flag  (id(img_bg_blue),    LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (id(img_bg_orange),  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(img_bg_magenta), LV_OBJ_FLAG_HIDDEN);
           } else if (status.find("Running") != std::string::npos || status.find("Forced") != std::string::npos) {
             arc_color       = lv_color_hex(0xFF8C5A);
             dot_color       = lv_color_hex(0xFF8C5A);
             eco_text_color  = lv_color_hex(0xFF8C5A);
             lv_obj_set_style_text_color(id(lbl_pump_status),
               lv_color_hex(0xFF8C5A), LV_PART_MAIN);
+            // Hintergrund: warmer Glow
+            lv_obj_add_flag  (id(img_bg_blue),    LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(img_bg_orange),  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (id(img_bg_magenta), LV_OBJ_FLAG_HIDDEN);
           } else if (status.find("Disabled") != std::string::npos) {
             arc_color       = lv_color_hex(0x909090);
             dot_color       = lv_color_hex(0x909090);
             eco_text_color  = lv_color_hex(0x909090);
             lv_obj_set_style_text_color(id(lbl_pump_status),
               lv_color_hex(0x909090), LV_PART_MAIN);
+            // Hintergrund: keiner (reines Schwarz, "kalt/inaktiv")
+            lv_obj_add_flag  (id(img_bg_blue),    LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (id(img_bg_orange),  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (id(img_bg_magenta), LV_OBJ_FLAG_HIDDEN);
           } else {
             arc_color       = lv_color_hex(0x5BAAFF);
             dot_color       = lv_color_hex(0xFFFFFF);
             eco_text_color  = lv_color_hex(0x5BAAFF);
             lv_obj_set_style_text_color(id(lbl_pump_status),
               lv_color_hex(0x909090), LV_PART_MAIN);
+            // Hintergrund: blauer Glow (Idle / Learning / Water draw / Standby)
+            lv_obj_clear_flag(id(img_bg_blue),    LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (id(img_bg_orange),  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (id(img_bg_magenta), LV_OBJ_FLAG_HIDDEN);
           }
 
           // Arc-Indikatorfarbe (LVGL v8: LV_PART_INDICATOR)
