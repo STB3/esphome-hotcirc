@@ -51,7 +51,7 @@ substitutions:
 
   # ── HOTCIRC Titel ─────────────────────────────────────────────────────────
   title_x:          "0"
-  title_y:          "-130"
+  title_y:          "-138"
 
   # ── ENABLED / DISABLED Badge ──────────────────────────────────────────────
   badge_x:          "0"
@@ -222,8 +222,8 @@ font:
     glyphs: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,-:°%/ "
   - file: "gfonts://Roboto"
     id: font_title
-    size: 20
-    glyphs: "HOTIRC "
+    size: 26
+    glyphs: "HotCirc "
   - file:
       type: gfonts
       family: Roboto
@@ -350,16 +350,16 @@ lvgl:
             border_width: 2
             border_color: 0x000000
 
-        # ── HOTCIRC Titel ──────────────────────────────────────────────────────
+        # ── HotCirc Titel (Logo: "Hot" orange + "Circ" hellgrau) ───────────────
         - label:
             id: lbl_title
-            text: "HOTCIRC"
+            recolor: true
+            text: "#FF8C5A Hot##E7E9EC Circ#"
             align: CENTER
             x: ${title_x}
             y: ${title_y}
             text_font: font_title
-            text_color: 0xA0A0A0
-            text_letter_space: 4
+            text_letter_space: 2
 
         # ── ENABLED / DISABLED Badge ───────────────────────────────────────────
         - label:

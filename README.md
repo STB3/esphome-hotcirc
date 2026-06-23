@@ -109,7 +109,7 @@ The most feature-rich variant, built around a 466x466 round display with capacit
 **Display layout:**
 
 - Outer ring: ECO level arc (0-360 degrees mapped from 0-255)
-- Top: "HOTCIRC" title and WiFi status icon
+- Top: "HotCirc" title (two-tone: orange "Hot", light grey "Circ") and WiFi status icon
 - Upper center: ENABLED/DISABLED status with toggle hint
 - Left/Right of center: Outlet and return temperatures
 - Center: Pump symbol with touch zone ring and "TAP TO RUN"
@@ -128,6 +128,10 @@ The LCD module requires GPIO17 to be driven HIGH at boot to enable its power sup
 ![UEDX4646 round display with interface hotcirc_ued4646_schematics](pictures/hotcirc_uedx4646/esphome-hotcirc_ued4646_schematics.png)
 
 ![UEDX4646 round display states](pictures/hotcirc_uedx4646/States/00_overview.png)
+
+> **▶ [Open the interactive display simulator](https://stb3.github.io/esphome-hotcirc/hotcirc_simulator.html)** &mdash; the same display, live in your browser: switch between operating states, drag the ECO level to reshape the arc, watch the pump animate, and tap the screen to open the learning matrix. No hardware required.
+
+> The simulator is a single self-contained HTML file ([`docs/hotcirc_simulator.html`](docs/hotcirc_simulator.html)) served via GitHub Pages.
 
 ---
 
@@ -421,6 +425,8 @@ esphome-hotcirc/
       __init__.py                          # ESPHome config schema and code generation
       esphome_hotcirc.h                     # HotWaterController class definition
       esphome_hotcirc.cpp                   # Core logic implementation
+  docs/
+    hotcirc_simulator.html                 # Interactive browser display simulator (GitHub Pages)
   packages/
     esphome-hotcirc_gui.yaml               # LVGL GUI package (UEDX4646 round display)
     esphome-hotcirc_dimming.yaml           # Display dimming / brightness package
@@ -428,6 +434,9 @@ esphome-hotcirc/
     pump_icon_f0.png                        # Pump icon animation frame 0
     pump_icon_f1.png                        # Pump icon animation frame 1
     pump_icon_f2.png                        # Pump icon animation frame 2
+    bg_idle_blue.png                       # State background: blue radial glow (idle/learning)
+    bg_running_orange.png                  # State background: warm glow (running/forced)
+    bg_disinfection_magenta.png            # State background: magenta glow (disinfection)
     pump_icon.xcf                           # GIMP source for the pump icon
     link.txt                               # Reference link(s)
     bak/                                    # Backups of GUI package and icons
@@ -461,6 +470,9 @@ The UEDX4646 variant pulls in reusable packages from `packages/`:
 - `pump_icon_f0.png` / `pump_icon_f1.png` / `pump_icon_f2.png` - the three animation frames for the pump icon (with `pump_icon.xcf` as the editable GIMP source)
 
 A `bak/` subfolder keeps previous versions of the GUI package and icon assets.
+    bg_idle_blue.png                       # State background: blue radial glow (idle/learning)
+    bg_running_orange.png                  # State background: warm glow (running/forced)
+    bg_disinfection_magenta.png            # State background: magenta glow (disinfection)
 
 Key internal constants:
 
