@@ -48,7 +48,7 @@
   .controls{width:100%;max-width:560px;display:flex;flex-direction:column;gap:22px}
   .seg-label{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.18em;
     text-transform:uppercase;color:var(--dim);margin-bottom:10px}
-  .states{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .states{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
   @media(max-width:520px){.states{grid-template-columns:repeat(2,1fr)}}
   .states button{font-family:'Inter',sans-serif;font-size:13px;font-weight:500;
     color:var(--muted);background:var(--panel-2);border:1px solid var(--line);
@@ -117,9 +117,9 @@
       </div>
 
       <div class="legend">
-        <span class="item"><span class="dot" style="background:#5baaff"></span>Idle / learning / water draw</span>
-        <span class="item"><span class="dot" style="background:#ff8c5a"></span>Running / forced</span>
-        <span class="item"><span class="dot" style="background:#e040fb"></span>Disinfection</span>
+        <span class="item"><span class="dot" style="background:#5baaff"></span>Standby</span>
+        <span class="item"><span class="dot" style="background:#ff8c5a"></span>Running: Scheduled / Manual Button / Web UI / Water Draw / Anti-Stagnation / Thermal-Stagnation Flush</span>
+        <span class="item"><span class="dot" style="background:#e040fb"></span>Running: Disinfection</span>
         <span class="item"><span class="dot" style="background:#909090"></span>Disabled</span>
       </div>
     </div>
@@ -143,16 +143,26 @@ const ICONS={
 };
 
 const STATES = {
-  standby:     {label:'Standby',     screen:'Idle',         enabled:true,  arc:C.blue,    dot:C.white,   glow:'blue',    pump:'idle',   out:38.5, ret:31.2, outCol:C.white, eco:120, foot:'plug', plug:'ok'},
-  running:     {label:'Running',     screen:'Running',      enabled:true,  arc:C.orange,  dot:C.orange,  glow:'orange',  pump:'run',    out:47.8, ret:41.0, outCol:C.white, eco:120, foot:'plug', plug:'ok'},
-  learning:    {label:'Learning',    screen:'Learning',     enabled:true,  arc:C.blue,    dot:C.white,   glow:'blue',    pump:'idle',   out:36.0, ret:30.5, outCol:C.white, eco:95,  foot:'plug', plug:'warn'},
-  disinfection:{label:'Disinfection',screen:'Disinfection', enabled:true,  arc:C.magenta, dot:C.magenta, glow:'magenta', pump:'disinf', out:62.5, ret:58.1, outCol:C.white, eco:200, foot:'plug', plug:'ok'},
-  disabled:    {label:'Disabled',    screen:'Disabled',     enabled:false, arc:C.gray,    dot:C.gray,    glow:'none',    pump:'off',    out:33.0, ret:29.8, outCol:'#aaaaaa',eco:120,foot:'wifi'},
-  forced:      {label:'Forced',      screen:'Forced',       enabled:true,  arc:C.orange,  dot:C.orange,  glow:'orange',  pump:'run',    out:49.2, ret:43.5, outCol:C.white, eco:120, foot:'plug', plug:'ok'},
-  waterdraw:   {label:'Water draw',  screen:'Idle',         enabled:true,  arc:C.blue,    dot:C.white,   glow:'blue',    pump:'idle',   out:44.0, ret:32.0, outCol:C.amber, eco:120, foot:'plug', plug:'ok'},
+  standby:      {label:'Standby',           screen:'Standby',                      enabled:true,  arc:C.blue,    dot:C.white,   glow:'blue',    pump:'idle',   out:38.5, ret:31.2, outCol:C.white, eco:120, foot:'plug', plug:'ok'},
+  scheduled:    {label:'Running: Scheduled',screen:'Running: Scheduled',            enabled:true,  arc:C.orange,  dot:C.orange,  glow:'orange',  pump:'run',    out:47.8, ret:41.0, outCol:C.white, eco:120, foot:'plug', plug:'ok'},
+  manual:       {label:'Running: Manual',   screen:'Running: Manual Button',        enabled:true,  arc:C.orange,  dot:C.orange,  glow:'orange',  pump:'run',    out:49.2, ret:43.5, outCol:C.white, eco:120, foot:'plug', plug:'ok'},
+  webui:        {label:'Running: Web UI',   screen:'Running: Web UI',               enabled:true,  arc:C.orange,  dot:C.orange,  glow:'orange',  pump:'run',    out:48.5, ret:42.1, outCol:C.white, eco:120, foot:'plug', plug:'ok'},
+  waterdraw:    {label:'Running: Water Draw',screen:'Running: Water Draw',          enabled:true,  arc:C.orange,  dot:C.orange,  glow:'orange',  pump:'run',    out:44.0, ret:32.0, outCol:C.white, eco:120, foot:'plug', plug:'ok'},
+  disinfection: {label:'Running: Disinfection',screen:'Running: Disinfection',      enabled:true,  arc:C.magenta, dot:C.magenta, glow:'magenta', pump:'disinf', out:62.5, ret:58.1, outCol:C.white, eco:200, foot:'plug', plug:'ok'},
+  antistag:     {label:'Running: Anti-Stagnation',screen:'Running: Anti-Stagnation',enabled:true,  arc:C.orange,  dot:C.orange,  glow:'orange',  pump:'run',    out:41.0, ret:35.2, outCol:C.white, eco:120, foot:'plug', plug:'ok'},
+  thermalstag:  {label:'Running: Thermal-Stagnation',screen:'Running: Thermal-Stagnation Flush',enabled:true,arc:C.orange,dot:C.orange,glow:'orange',pump:'run',out:55.0,ret:50.1,outCol:C.white,eco:120,foot:'plug',plug:'ok'},
+  disabled:     {label:'Disabled',          screen:'Disabled',                      enabled:false, arc:C.gray,    dot:C.gray,    glow:'none',    pump:'off',    out:33.0, ret:29.8, outCol:'#aaaaaa',eco:120,foot:'wifi'},
 };
-const STATUS_COLOR = {Idle:C.gray,Learning:C.gray,Running:C.orange,Forced:C.orange,
-                      Disinfection:C.magenta,Disabled:C.gray};
+const STATUS_COLOR = {
+  'Standby':C.gray,
+  'Disabled':C.gray,
+};
+function statusColor(s){
+  if(s in STATUS_COLOR) return STATUS_COLOR[s];
+  if(s.includes('Disinfection')) return C.magenta;
+  if(s.includes('Running')) return C.orange;
+  return C.gray;
+}
 
 let current = 'standby';
 let ecoOverride = STATES.standby.eco;
@@ -230,7 +240,7 @@ function render(){
   const eco=ecoOverride;
   const ecoSweep=SWEEP*(eco/255);
   const [dx,dy]=polar(R,START+ecoSweep);
-  const stColor=STATUS_COLOR[s.screen]||C.gray;
+  const stColor = statusColor(s.screen);
 
   // footer
   let footer='';
