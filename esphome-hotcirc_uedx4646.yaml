@@ -655,7 +655,8 @@ time:
     on_time_sync:
       - logger.log: "Time synchronized"
 
-# Check smart plug connectivity every 60 seconds
+# Check smart plug connectivity AND relay state every 60 seconds.
+# On state mismatch the last commanded state is re-sent (controller is master).
 interval:
   - interval: 60s
     then:
@@ -681,13 +682,30 @@ script:
           tag: "smart_plug"
       - delay: 100ms  # Allow watchdog to be fed
       - http_request.get:
-          url: !lambda 'return "http://" + id(smart_plug_ip) + "/sensor/status";'
+          url: !lambda 'return "http://" + id(smart_plug_ip) + "/switch/relay";'
+          capture_response: true
           on_response:
             then:
               - lambda: |-
+                  if (response->status_code != 200) {
+                    ESP_LOGE("smart_plug", "FAILED! HTTP status %d", response->status_code);
+                    id(smart_plug_connected) = false;
+                    id(smart_plug_status).publish_state(false);
+                    return;
+                  }
                   ESP_LOGI("smart_plug", "SUCCESS! Smart plug is reachable");
                   id(smart_plug_connected) = true;
                   id(smart_plug_status).publish_state(true);
+
+                  // Report actual relay state vs. expected state
+                  bool expected_state = id(pump_relay).state;
+                  if (body.find("\"value\":true") != std::string::npos) {
+                    ESP_LOGI("smart_plug", "Relay state: ON (expected: %s)", expected_state ? "ON" : "OFF");
+                  } else if (body.find("\"value\":false") != std::string::npos) {
+                    ESP_LOGI("smart_plug", "Relay state: OFF (expected: %s)", expected_state ? "ON" : "OFF");
+                  } else {
+                    ESP_LOGW("smart_plug", "Could not parse relay state from response: %s", body.c_str());
+                  }
           on_error:
             then:
               - lambda: |-
@@ -698,16 +716,53 @@ script:
   - id: check_smart_plug_script
     mode: single
     then:
+      # Query the relay endpoint directly: one request checks BOTH
+      # reachability AND actual relay state.
+      # Response body example: {"id":"switch-relay","state":"ON","value":true}
       - http_request.get:
-          url: !lambda 'return "http://" + id(smart_plug_ip) + "/sensor/status";'
+          url: !lambda 'return "http://" + id(smart_plug_ip) + "/switch/relay";'
+          capture_response: true
           on_response:
             then:
               - lambda: |-
-                    if (!id(smart_plug_connected)) {
-                      ESP_LOGI("smart_plug", "Smart plug is now ONLINE");
+                  if (response->status_code != 200) {
+                    ESP_LOGW("smart_plug", "Unexpected HTTP status %d from smart plug", response->status_code);
+                    id(smart_plug_connected) = false;
+                    id(smart_plug_status).publish_state(false);
+                    return;
+                  }
+
+                  // --- Reachability OK ---
+                  if (!id(smart_plug_connected)) {
+                    ESP_LOGI("smart_plug", "Smart plug is now ONLINE");
+                  }
+                  id(smart_plug_connected) = true;
+                  id(smart_plug_status).publish_state(true);
+
+                  // --- State verification ---
+                  bool plug_state;
+                  if (body.find("\"value\":true") != std::string::npos) {
+                    plug_state = true;
+                  } else if (body.find("\"value\":false") != std::string::npos) {
+                    plug_state = false;
+                  } else {
+                    ESP_LOGW("smart_plug", "Could not parse relay state from response: %s", body.c_str());
+                    return;
+                  }
+
+                  bool expected_state = id(pump_relay).state;
+                  if (plug_state != expected_state) {
+                    // Plug and controller disagree (e.g. plug rebooted or a
+                    // switch command was lost). Controller is master:
+                    // re-send the command to restore the expected state.
+                    ESP_LOGW("smart_plug", "State mismatch: plug=%s, expected=%s -> re-sending command",
+                             plug_state ? "ON" : "OFF", expected_state ? "ON" : "OFF");
+                    if (expected_state) {
+                      id(pump_relay).turn_on();
+                    } else {
+                      id(pump_relay).turn_off();
                     }
-                    id(smart_plug_connected) = true;
-                    id(smart_plug_status).publish_state(true);
+                  }
           on_error:
             then:
               - lambda: |-
