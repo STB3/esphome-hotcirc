@@ -136,6 +136,15 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  # FIX #21: Entprellt die Online/Offline-Erkennung. Der BK7231N-Plug lehnt
+  # gelegentlich einen einzelnen TCP-Connect ab (esp-tls select() timeout),
+  # erholt sich aber im naechsten 60-s-Check. Erst nach OFFLINE_THRESHOLD
+  # aufeinanderfolgenden Fehlern wird der Plug als OFFLINE gemeldet - das
+  # eliminiert das transiente Log-Rauschen.
+  - id: plug_fail_count
+    type: int
+    restore_value: no
+    initial_value: '0'
   # Touch feedback globals
   - id: touch_indicator_x
     type: int
@@ -384,9 +393,17 @@ switch:
                   return "http://" + id(smart_plug_ip) + "/switch/relay/turn_on";
                 body: ""
                 on_error:
+                  # FIX #21: Statt bis zu 60 s auf die periodische Reconciliation
+                  # zu warten, hier nach 3 s gezielt nachpruefen. delay yieldet
+                  # (nicht-blockierend); check_smart_plug_script sendet bei
+                  # plug=OFF/expected=ON den Befehl erneut. 60-s-Interval bleibt
+                  # als Backstop, falls auch der schnelle Retry scheitert.
                   - logger.log:
-                      format: "HTTP Error: Failed to turn ON smart plug"
+                      format: "HTTP Error: turn ON failed - fast reconcile queued"
                       level: ERROR
+                      tag: "smart_plug"
+                  - delay: 3s
+                  - script.execute: check_smart_plug_script
           else:
             - logger.log:
                 format: "WiFi down - ON command deferred, reconciliation will re-send"
@@ -402,9 +419,13 @@ switch:
                   return "http://" + id(smart_plug_ip) + "/switch/relay/turn_off";
                 body: ""
                 on_error:
+                  # FIX #21: siehe turn_on_action - schneller Reconcile nach 3 s.
                   - logger.log:
-                      format: "HTTP Error: Failed to turn OFF smart plug"
+                      format: "HTTP Error: turn OFF failed - fast reconcile queued"
                       level: ERROR
+                      tag: "smart_plug"
+                  - delay: 3s
+                  - script.execute: check_smart_plug_script
           else:
             - logger.log:
                 format: "WiFi down - OFF command deferred, reconciliation will re-send"
@@ -761,14 +782,27 @@ script:
           on_response:
             then:
               - lambda: |-
+                  // FIX #21: 2 aufeinanderfolgende Fehler noetig, bevor OFFLINE
+                  // gemeldet wird. Ein unerwarteter Status zaehlt wie ein
+                  // Transport-Fehler, markiert aber nicht sofort offline.
+                  const int OFFLINE_THRESHOLD = 2;
+
                   if (response->status_code != 200) {
-                    ESP_LOGW("smart_plug", "Unexpected HTTP status %d from smart plug", response->status_code);
-                    id(smart_plug_connected) = false;
-                    id(smart_plug_status).publish_state(false);
+                    id(plug_fail_count)++;
+                    if (id(plug_fail_count) >= OFFLINE_THRESHOLD && id(smart_plug_connected)) {
+                      ESP_LOGW("smart_plug", "Smart plug is now OFFLINE (HTTP status %d, %d consecutive fails)",
+                               response->status_code, id(plug_fail_count));
+                      id(smart_plug_connected) = false;
+                      id(smart_plug_status).publish_state(false);
+                    } else {
+                      ESP_LOGD("smart_plug", "Unexpected HTTP status %d (fail #%d) - tolerating",
+                               response->status_code, id(plug_fail_count));
+                    }
                     return;
                   }
 
-                  // --- Reachability OK ---
+                  // --- Reachability OK: Fehlerzaehler zuruecksetzen ---
+                  id(plug_fail_count) = 0;
                   if (!id(smart_plug_connected)) {
                     ESP_LOGI("smart_plug", "Smart plug is now ONLINE");
                   }
@@ -802,11 +836,21 @@ script:
           on_error:
             then:
               - lambda: |-
-                  if (id(smart_plug_connected)) {
-                    ESP_LOGW("smart_plug", "Smart plug is now OFFLINE");
+                  // FIX #21: transiente Connect-Fehler (esp-tls select() timeout)
+                  // tolerieren - erst nach OFFLINE_THRESHOLD Fehlern melden.
+                  const int OFFLINE_THRESHOLD = 2;
+                  id(plug_fail_count)++;
+                  if (id(plug_fail_count) >= OFFLINE_THRESHOLD) {
+                    if (id(smart_plug_connected)) {
+                      ESP_LOGW("smart_plug", "Smart plug is now OFFLINE (after %d consecutive fails)",
+                               id(plug_fail_count));
+                    }
+                    id(smart_plug_connected) = false;
+                    id(smart_plug_status).publish_state(false);
+                  } else {
+                    ESP_LOGD("smart_plug", "Transient plug error #%d - tolerating, retry next cycle",
+                             id(plug_fail_count));
                   }
-                  id(smart_plug_connected) = false;
-                  id(smart_plug_status).publish_state(false);
 
 
 # === Instantiate HotCirc Component ===
