@@ -8,10 +8,13 @@ esphome:
   on_boot:
     priority: 600  # Run early, before components initialize
     then:
-      # FIRST: Power on LCD immediately using ESP-IDF GPIO functions
+      # FIRST: Power on LCD immediately.
+      # FIX #14: GPIO17 was claimed twice (raw ESP-IDF gpio_* calls here AND
+      # the lcd_power output component below). The output component's setup
+      # runs at HARDWARE priority (800) and is therefore already initialized
+      # when on_boot(600) executes - so we simply use it.
+      - output.turn_on: lcd_power
       - lambda: |-
-          gpio_set_direction(GPIO_NUM_17, GPIO_MODE_OUTPUT);
-          gpio_set_level(GPIO_NUM_17, 1);
           ESP_LOGI("lcd", "LCD module power supply enabled (GPIO17 HIGH)");
       - lambda: |-
           // Structure to store IP address in flash (must be trivially copyable)
@@ -29,10 +32,8 @@ esphome:
           } else {
             ESP_LOGI("config", "No saved IP found, using default: %s", id(smart_plug_ip).c_str());
           }
-      - lambda: |-
-          if (!id(wifi_connected)) {
-            id(ap_mode_blink).execute();
-          }
+      # FIX #12: ap_mode_blink entfernt - das Script war nach dem Umzug auf
+      # die Display-Variante nur noch eine leere Busy-Loop ohne jede Wirkung.
       - delay: 100ms
 
 esp32:
@@ -46,15 +47,24 @@ psram:
   mode: octal   # use octal for at least 8MB PSRAM (2MB use quad)
   speed: 80MHz
 
+# FIX #8/NVS: Slider-Werte werden jetzt persistiert (restore_value: true bei
+# den number-Templates unten). Damit haeufige Encoder-Aenderungen am ECO-Level
+# den NVS nicht unnoetig abnutzen, werden Preference-Writes gesammelt und nur
+# alle 5 Minuten tatsaechlich geschrieben. (ESPHome-Default waere 60s.)
+preferences:
+  flash_write_interval: 5min
+
 # === Modularer Aufbau =====================================================
 # Der komplette Grafik-/Display-Teil (SPI-Bus, Display-Renderer, Fonts,
 # Farben und der Display-Brightness-Regler) liegt ausgelagert in:
 #   esphome-hotcirc_gui.yaml
 # ESPHome fuehrt die Pakete vor der Validierung zusammen, daher koennen
 # beide Dateien gegenseitig auf IDs zugreifen (z. B. disp1, outlet_temp).
+# FIX #17: Forward-Slashes statt Backslashes - Backslash-Pfade funktionieren
+# nur unter Windows und brechen den Build im HA-Add-on / unter Linux.
 packages:
-  gui:     !include packages\esphome-hotcirc_gui.yaml
-  dimming: !include packages\esphome-hotcirc_dimming.yaml
+  gui:     !include packages/esphome-hotcirc_gui.yaml
+  dimming: !include packages/esphome-hotcirc_dimming.yaml
 
 external_components:
   - source:
@@ -68,11 +78,12 @@ logger:
     dallas.temp.sensor: INFO
     http_request.idf: INFO
     learning: INFO  # set to debug to show learning matrix in logs
+    # FIX #20: Komponenten-Tag vereinheitlicht - alle Controller-Logs laufen
+    # jetzt unter "hotcirc" (der alte Zweit-Tag "hotwater" existiert nicht mehr)
     hotcirc: INFO
-    hotwater: INFO
     wifi: INFO
     dim: INFO
-    
+
 api:
   reboot_timeout: 600min
 
@@ -82,7 +93,7 @@ ota:
 web_server:
   version: 3
   port: 80
-  include_internal: false     # don't exposes internal handlers
+  include_internal: false     # don't expose internal handlers
 
 wifi:
 # Uncomment this if you have entered your credentials in the secrets.yaml
@@ -95,13 +106,11 @@ wifi:
   reboot_timeout: 0s
 
   on_connect:
-    - script.stop: ap_mode_blink
     - globals.set:
         id: wifi_connected
         value: 'true'
 
   on_disconnect:
-    - script.execute: ap_mode_blink
     - globals.set:
         id: wifi_connected
         value: 'false'
@@ -150,9 +159,12 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
-  # Last encoder value for delta calculation
-  - id: last_encoder_value
-    type: int
+  # FIX #3: speichert einen millis()-Zeitstempel, kein Encoder-"Value".
+  # War vorher `int` namens last_encoder_value - nach 24,8 Tagen Uptime
+  # kippte der Wert ins Negative und der Debounce lief Amok. Jetzt uint32_t
+  # (gleiche Breite wie millis()), Differenzbildung ist damit rollover-sicher.
+  - id: last_encoder_ms
+    type: uint32_t
     restore_value: no
     initial_value: '0'
 
@@ -165,14 +177,14 @@ one_wire:
     mode:
       input: true
       pullup: true
-      
+
 - platform: gpio
   id: ow_bus1
   pin:
     number: GPIO40
     mode:
       input: true
-      pullup: true      
+      pullup: true
 
 sensor:
   - platform: dallas_temp
@@ -205,6 +217,12 @@ sensor:
     update_interval: 60s
 
   # Last pump cycle energy consumption
+  # FIX #1: state_class war "total_increasing" - der Wert ist aber PRO ZYKLUS
+  # und faellt zwischen Zyklen. Home Assistant interpretiert jeden Rueckgang
+  # bei total_increasing als Zaehler-Reset und blaeht das Energie-Dashboard
+  # auf. "measurement" ist die korrekte Klasse fuer einen Momentanwert.
+  # Der delta-Filter verhindert zusaetzlich, dass alle 5 s der identische
+  # Wert in die HA-Datenbank gespammt wird.
   - platform: template
     name: "Last Cycle Energy"
     id: last_cycle_energy
@@ -214,8 +232,10 @@ sensor:
     unit_of_measurement: "kWh"
     accuracy_decimals: 4
     device_class: energy
-    state_class: total_increasing
+    state_class: measurement
     icon: "mdi:lightning-bolt"
+    filters:
+      - delta: 0.0001
 
   # Last pump cycle duration
   - platform: template
@@ -227,6 +247,8 @@ sensor:
     unit_of_measurement: "s"
     accuracy_decimals: 0
     icon: "mdi:timer-outline"
+    filters:
+      - delta: 1
 
   - platform: rotary_encoder
     name: "Rotary Encoder"
@@ -250,9 +272,10 @@ sensor:
           // Wach: Drehen haelt das Display wach
           id(last_active_ms) = millis();
           // Debounce: Events innerhalb 50ms nach letztem Event ignorieren
-          unsigned long now = millis();
-          if (now - id(last_encoder_value) < 50) return;
-          id(last_encoder_value) = now;
+          // FIX #3: rollover-sichere uint32-Differenz gegen last_encoder_ms
+          uint32_t now = millis();
+          if (now - id(last_encoder_ms) < 50) return;
+          id(last_encoder_ms) = now;
           float new_eco = id(eco_level_config).state + 5.0;
           if (new_eco > 255) new_eco = 255;
           id(eco_level_config).publish_state(new_eco);
@@ -264,9 +287,9 @@ sensor:
           if (id(disp_stage) != 0) { id(hotcirc_display_wake).execute(); return; }
           // Wach: Drehen haelt das Display wach (Inaktivitaet zuruecksetzen)
           id(last_active_ms) = millis();
-          unsigned long now = millis();
-          if (now - id(last_encoder_value) < 50) return;
-          id(last_encoder_value) = now;
+          uint32_t now = millis();
+          if (now - id(last_encoder_ms) < 50) return;
+          id(last_encoder_ms) = now;
           float new_eco = id(eco_level_config).state - 5.0;
           if (new_eco < 0) new_eco = 0;
           id(eco_level_config).publish_state(new_eco);
@@ -275,6 +298,9 @@ sensor:
 
 
 text_sensor:
+  # FIX #7: Das Trigger->String-Mapping lebt jetzt EINMAL im C++-Component
+  # (get_pump_trigger_str()). Die frueheren drei handgepflegten Kopien waren
+  # bereits auseinandergedriftet ("Schedule" im Log vs. "Scheduled" hier).
   - platform: template
     name: "Pump Status"
     id: pump_status
@@ -282,37 +308,7 @@ text_sensor:
     update_interval: 1s
     lambda: |-
       if (id(hotwater).pump_running_) {
-        // Get trigger reason
-        auto trigger = id(hotwater).get_pump_trigger();
-        std::string trigger_str;
-
-        switch(trigger) {
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::MANUAL_BUTTON:
-            trigger_str = "Manual Button";
-            break;
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::MANUAL_WEBUI:
-            trigger_str = "Web UI";
-            break;
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::WATER_DRAW:
-            trigger_str = "Water Draw";
-            break;
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::SCHEDULED:
-            trigger_str = "Scheduled";
-            break;
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::DISINFECTION:
-            trigger_str = "Disinfection";
-            break;
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::ANTI_STAGNATION:
-            trigger_str = "Anti-Stagnation";
-            break;
-          case esphome::esphome_hotcirc::HotWaterController::PumpTrigger::THERMAL_STAGNATION:
-            trigger_str = "Thermal-Stagnation Flush";
-            break;
-          default:
-            trigger_str = "Unknown";
-        }
-
-        return std::string("Running: ") + trigger_str;
+        return std::string("Running: ") + id(hotwater).get_pump_trigger_str();
       } else if (!id(hotwater).pump_enabled_) {
         return std::string("Disabled");
       } else {
@@ -365,35 +361,55 @@ text_sensor:
 switch:
   # Smart plug control via HTTP (replaces GPIO relay)
   # IP address can be configured via "Smart Plug IP Address" text input
+  # FIX #19: das leere state-Lambda entfernt - "optimistic: true" uebernimmt
+  # die State-Verwaltung, ein Lambda daneben ist widerspruechlich.
+  # FIX #18: HTTP-Requests nur absetzen, wenn WiFi verbunden ist. Vorher
+  # feuerte restore_mode ALWAYS_OFF beim Boot einen POST ins Leere
+  # (garantierter Fehler-Log bei jedem Start). Ein uebersprungenes Kommando
+  # ist unkritisch: check_smart_plug_script gleicht den Relaiszustand ohnehin
+  # alle 60 s ab und sendet den Soll-Zustand bei Abweichung erneut.
   - platform: template
     id: pump_relay
     name: "Pump Relay (HTTP)"
     restore_mode: ALWAYS_OFF  # Safety: ensure pump is off on boot
     internal: true  # Hide from UI - controlled internally
-    turn_on_action:
-      - http_request.post:
-          url: !lambda |-
-            return "http://" + id(smart_plug_ip) + "/switch/relay/turn_on";
-          body: ""
-          on_error:
-            - logger.log:
-                format: "HTTP Error: Failed to turn ON smart plug"
-                level: ERROR
-
-    turn_off_action:
-      - http_request.post:
-          url: !lambda |-
-            return "http://" + id(smart_plug_ip) + "/switch/relay/turn_off";
-          body: ""
-          on_error:
-            - logger.log:
-                format: "HTTP Error: Failed to turn OFF smart plug"
-                level: ERROR
-    lambda: |-
-      // Return current state (track internally since we can't query the plug)
-      // The hotcirc component will manage the state
-      return {};
     optimistic: true  # Assume state changes succeed
+    turn_on_action:
+      - if:
+          condition:
+            lambda: 'return id(wifi_connected);'
+          then:
+            - http_request.post:
+                url: !lambda |-
+                  return "http://" + id(smart_plug_ip) + "/switch/relay/turn_on";
+                body: ""
+                on_error:
+                  - logger.log:
+                      format: "HTTP Error: Failed to turn ON smart plug"
+                      level: ERROR
+          else:
+            - logger.log:
+                format: "WiFi down - ON command deferred, reconciliation will re-send"
+                level: WARN
+                tag: "smart_plug"
+    turn_off_action:
+      - if:
+          condition:
+            lambda: 'return id(wifi_connected);'
+          then:
+            - http_request.post:
+                url: !lambda |-
+                  return "http://" + id(smart_plug_ip) + "/switch/relay/turn_off";
+                body: ""
+                on_error:
+                  - logger.log:
+                      format: "HTTP Error: Failed to turn OFF smart plug"
+                      level: ERROR
+          else:
+            - logger.log:
+                format: "WiFi down - OFF command deferred, reconciliation will re-send"
+                level: WARN
+                tag: "smart_plug"
 
   # Master enable/disable switch for pump operation
   - platform: template
@@ -435,11 +451,11 @@ button:
     icon: "mdi:lan-connect"
     on_press:
       - script.execute: test_smart_plug_script
-      
+
   - platform: factory_reset
     id: factory_reset_btn
     name: Factory Reset
-    
+
   - platform: safe_mode
     id: button_safe_mode
     name: Safe Mode Boot
@@ -471,12 +487,20 @@ text:
           stored_ip.ip[sizeof(stored_ip.ip) - 1] = '\0';  // Ensure null termination
 
           if (pref.save(&stored_ip)) {
-          ESP_LOGI("config", "Smart plug IP address changed to: %s (saved to flash)", x.c_str());
+            ESP_LOGI("config", "Smart plug IP address changed to: %s (saved to flash)", x.c_str());
           } else {
             ESP_LOGE("config", "Failed to save smart plug IP to flash!");
           }
     entity_category: config
 
+# FIX #8: restore_value: true bei allen Konfig-Slidern. Vorher gingen alle
+# Nutzer-Einstellungen bei jedem Reboot verloren (Reset auf initial_value).
+# Die on_value-Aktion feuert beim Restore ebenfalls, damit landet der
+# persistierte Wert auch im C++-Component. NVS-Wear ist durch
+# preferences.flash_write_interval (oben, 5 min) entschaerft.
+# Hinweis: initial_value greift nur noch beim allerersten Boot; die Werte im
+# esphome_hotcirc:-Block unten dienen als Fallback-Defaults, bis on_value
+# feuert. Beide Stellen konsistent halten.
 number:
   - platform: template
     name: "Outlet Rise Threshold"
@@ -486,6 +510,7 @@ number:
     max_value: 3.0
     step: 0.1
     initial_value: 1.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "°C"
     mode: slider
@@ -502,6 +527,7 @@ number:
     max_value: 15.0
     step: 0.5
     initial_value: 5.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "°C"
     mode: slider
@@ -518,6 +544,7 @@ number:
     max_value: 20.0
     step: 1.0
     initial_value: 10.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "°C"
     mode: slider
@@ -534,6 +561,7 @@ number:
     max_value: 40.0
     step: 1.0
     initial_value: 30.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "°C"
     mode: slider
@@ -550,6 +578,7 @@ number:
     max_value: 40.0
     step: 1.0
     initial_value: 20.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "L/min"
     mode: slider
@@ -566,6 +595,7 @@ number:
     max_value: 255
     step: 5
     initial_value: 120
+    restore_value: true
     optimistic: true
     mode: slider
     on_value:
@@ -580,7 +610,7 @@ number:
 
 # LCD Power: GPIO17 output - required by esphome_hotcirc component
 # No name = not exposed to web interface
-# Set HIGH in on_boot lambda
+# Set HIGH in on_boot via output.turn_on (FIX #14)
 output:
   - platform: gpio
     pin: GPIO17
@@ -647,31 +677,37 @@ binary_sensor:
       return id(smart_plug_connected);
 
 
+# FIX #20 (kosmetisch, fuers veroeffentlichte Projekt): Geraet steht in
+# Deutschland -> Europe/Berlin und de-Pool statt Amsterdam/nl-Pool.
+# (Gleicher UTC-Offset, aber konsistent.)
 time:
   - platform: sntp
     id: sntp_time
-    timezone: Europe/Amsterdam
-    servers: ["0.nl.pool.ntp.org", "1.nl.pool.ntp.org", "2.nl.pool.ntp.org"]
+    timezone: Europe/Berlin
+    servers: ["0.de.pool.ntp.org", "1.de.pool.ntp.org", "2.de.pool.ntp.org"]
     on_time_sync:
       - logger.log: "Time synchronized"
 
 # Check smart plug connectivity AND relay state every 60 seconds.
 # On state mismatch the last commanded state is re-sent (controller is master).
+# FIX #18: nur bei bestehender WiFi-Verbindung - vorher lief der Check auch
+# offline und produzierte alle 60 s einen Fehler-Log.
 interval:
   - interval: 60s
     then:
-      - script.execute: check_smart_plug_script
+      - if:
+          condition:
+            lambda: 'return id(wifi_connected);'
+          then:
+            - script.execute: check_smart_plug_script
 
 script:
-  - id: ap_mode_blink
-    mode: restart
-    then:
-      - while:
-          condition:
-            lambda: 'return !id(wifi_connected);'
-          then:
-            - delay: 1000ms
+  # FIX #12: ap_mode_blink (leere Busy-Loop, LED-Blinken existiert auf der
+  # Display-Variante nicht mehr) ersatzlos entfernt, inkl. aller Aufrufer.
 
+  # Hinweis: test_ und check_smart_plug_script teilen bewusst Struktur - der
+  # Test-Button liefert explizites SUCCESS/FAILED-Feedback im Log, der
+  # periodische Check loggt nur Zustandswechsel und macht die Reconciliation.
   - id: test_smart_plug_script
     mode: single
     then:
@@ -774,6 +810,11 @@ script:
 
 
 # === Instantiate HotCirc Component ===
+# FIX #6: anti_stagnation_interval entfernt - der Parameter wurde vom Code
+# nicht mehr ausgewertet (Anti-Stagnation laeuft auf fixem Wochenplan:
+# Sonntag 03:00, siehe check_anti_stagnation_() im Component).
+# Hinweis zu den Zahlenwerten: sie dienen als Boot-Defaults; nach dem ersten
+# Slider-Restore ueberschreiben die number-Templates oben diese Werte.
 esphome_hotcirc:
   id: hotwater
   outlet_sensor: outlet_temp
@@ -793,13 +834,9 @@ esphome_hotcirc:
   pump_flow_rate: 20.0   # Pump flow rate in liters per minute (L/min)
                          # Measured value: 20 L/min
                          # Used for energy consumption calculation
-  anti_stagnation_interval: 172800  # Anti-stagnation interval in seconds (default: 48 hours)
-                                    # Pump runs for short duration when disabled or in vacation mode
-                                    # to prevent impeller seizure
   anti_stagnation_runtime: 15       # Anti-stagnation run time in seconds (default: 15 seconds)
                                     # Short run is enough to move impeller and prevent seizure
   thermal_stagnation_delta: 2.0    # °C: outlet - return < 2°C → Flush
   thermal_stagnation_runtime: 10   # Sekunden Pumpenlauf
   thermal_stagnation_min_return: 40.0  # °C Mindestrücklauftemperatur
   thermal_stagnation_cooldown: 1800  # 30 min Sperrzeit nach Flush
-  

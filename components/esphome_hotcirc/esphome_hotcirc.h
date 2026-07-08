@@ -10,14 +10,25 @@
 namespace esphome {
 namespace esphome_hotcirc {
 
-// Structure for storing learning matrix in flash
+// Structure for storing learning matrix in flash.
+// FIX #11: magic + version field added. Detecting an old 24-slot layout via a
+// plain additive checksum was unreliable (sums can collide); an explicit magic
+// word makes format detection deterministic. Note: changing the struct size
+// also changes the NVS key hash, so existing saved matrices are invalidated
+// once after this update (the default pattern is re-initialized).
 struct LearnMatrixData {
-  uint8_t learn[7][48];  // Changed to 48 half-hourly slots
-  uint32_t checksum;  // Simple validation
+  uint32_t magic;        // Must equal MATRIX_MAGIC
+  uint8_t version;       // Layout version, currently MATRIX_VERSION
+  uint8_t reserved[3];   // Padding/alignment, keep zeroed
+  uint8_t learn[7][48];  // 48 half-hourly slots
+  uint32_t checksum;     // Additive checksum over learn[][]
 };
 
 class HotWaterController : public Component {
  public:
+  static constexpr uint32_t MATRIX_MAGIC = 0x48435231;  // "HCR1"
+  static constexpr uint8_t MATRIX_VERSION = 2;          // 2 = 48-slot layout
+
   // Pump trigger types - defines what caused the pump to start
   enum class PumpTrigger {
     NONE,              // Pump not running
@@ -59,6 +70,10 @@ class HotWaterController : public Component {
     this->pump_flow_rate_ = flow_rate_lpm;
   }
 
+  // FIX #6: DEPRECATED / unused. Anti-stagnation runs on a fixed weekly
+  // schedule (Sunday 03:00, see check_anti_stagnation_()); this interval is
+  // no longer evaluated. Setter kept only so existing YAMLs of other variants
+  // still validate. Remove together with the schema entry in a future release.
   void set_anti_stagnation_interval(uint32_t interval_seconds) {
     this->ANTI_STAGNATION_INTERVAL = interval_seconds;
   }
@@ -99,8 +114,16 @@ class HotWaterController : public Component {
     return pump_trigger_;
   }
 
+  // FIX #7: Single source of truth for trigger names. Used by run_pump()
+  // logging AND the YAML "Pump Status" text sensor - previously three
+  // hand-written copies had already drifted ("Schedule" vs "Scheduled").
+  const char *get_pump_trigger_str() const { return trigger_to_str_(pump_trigger_); }
+  static const char *trigger_to_str_(PumpTrigger t);
+
   // Parameters (configurable)
-  float temp_rise_threshold_{1.5f};      // Minimum temperature rise to detect draw
+  // FIX #9: default aligned with the shipped YAML (1.0 °C, reduced from 1.5
+  // to match the slower temperature response of the 40 cm sensor pipe).
+  float temp_rise_threshold_{1.0f};      // Minimum temperature rise to detect draw
   float return_rise_threshold_{5.0f};    // Target return temperature rise
   float disinfection_temp_threshold_{10.0f};  // Temp rise above baseline indicating disinfection cycle
   float min_return_temp_{30.0f};         // Minimum return temp to start pump (water already hot enough)
@@ -110,7 +133,7 @@ class HotWaterController : public Component {
   uint32_t MINIMUM_DRAW_DURATION = 15000; // 15 seconds in milliseconds
   uint32_t USER_REQUEST_MAX_AGE = 1800;  // 30 minutes
   uint32_t DISINFECTION_COOLDOWN = 3600; // 1 hour cooldown before re-detecting disinfection (seconds)
-  uint32_t ANTI_STAGNATION_INTERVAL = 172800; // 48 hours (2 days) in seconds
+  uint32_t ANTI_STAGNATION_INTERVAL = 172800; // DEPRECATED - unused, see set_anti_stagnation_interval()
   uint32_t ANTI_STAGNATION_RUNTIME = 15;     // Anti-stagnation run time (seconds)
   uint32_t THERMAL_STAGNATION_RUNTIME = 10;  // Thermal stagnation flush run time (seconds)
   uint32_t THERMAL_STAGNATION_COOLDOWN = 1800; // 30 min cooldown between thermal stagnation runs
@@ -134,7 +157,7 @@ class HotWaterController : public Component {
   float baseline_outlet_{NAN};           // Baseline outlet temp for disinfection detection
   time_t last_water_draw_time_{0};       // Timestamp of last detected water draw
   bool vacation_mode_{false};            // True when no water draw for 24h
-  bool draw_pending_{false};			 // True in case potential water draw detected
+  bool draw_pending_{false};             // True in case potential water draw detected (read by GUI)
 
   // Pump control state
   bool pump_running_{false};
@@ -145,8 +168,12 @@ class HotWaterController : public Component {
   uint32_t thermal_stagnation_started_{0}; // millis() when condition first met (0 = not pending)
   time_t   last_thermal_stagnation_run_{0}; // epoch timestamp of last thermal stagnation run
   float baseline_return_{NAN};
-  uint32_t pump_start_{0};
-  time_t last_run_epoch_ = 0;
+  // FIX (millis-Rollover): internal timing uses a millisecond base whose
+  // unsigned difference is wrap-safe. pump_start_ (seconds) is kept updated
+  // for backward compatibility (GUI package may read it).
+  uint32_t pump_start_ms_{0};            // millis() at pump start (wrap-safe reference)
+  uint32_t pump_start_{0};               // pump_start_ms_ / 1000 (compatibility only)
+  time_t last_run_epoch_ = 0;            // 0 = unknown (clock invalid at last stop)
 
   // Energy tracking for current/last pump cycle
   float energy_sum_{0.0f};               // Accumulated energy during current cycle (Wh)
@@ -156,11 +183,16 @@ class HotWaterController : public Component {
   uint32_t last_cycle_duration_{0};      // Duration of last cycle (seconds)
 
   // UI state
-  uint32_t yellow_led_on_until_{0};
+  uint32_t yellow_led_on_until_{0};      // Compared wrap-safe via signed diff in update_leds()
   bool learning_enabled_{true};
   bool pump_enabled_{true};  // Master enable/disable for pump operation
   bool button_last_{false};
   uint32_t button_pressed_since_{0};
+
+  // FIX #4: non-blocking LED flash after matrix reset (was 6x delay(200)
+  // = 1.2 s blocking loop() stall). Driven from update_leds().
+  uint8_t led_flash_remaining_{0};       // Toggles left in the flash sequence
+  uint32_t led_flash_next_ms_{0};        // millis() deadline for next toggle
 
   // Scheduled trigger tracking (prevents re-triggering same 30-min slot)
   int last_scheduled_day_{-1};   // Last day when scheduled trigger fired
@@ -192,10 +224,11 @@ class HotWaterController : public Component {
   void stop_pump(const char *reason);
 
  protected:
-  void detect_water_draw();              // DEPRECATED: poll-based, replaced by on_outlet_sample_()
-                                         // IMPORTANT: Suspended while pump_running_ to prevent false learning
-  void on_outlet_sample_(float t_now);   // Callback-driven draw detection (fed by outlet sensor publish)
-                                         // Immune to loop() starvation on the display node
+  // FIX #10: the deprecated poll-based detect_water_draw() has been removed
+  // entirely (history lives in Git). Detection runs exclusively in
+  // on_outlet_sample_(), fed by the outlet sensor's publish callback and
+  // therefore immune to loop() starvation on the display node.
+  void on_outlet_sample_(float t_now);
   void reset_water_draw_detection_();    // Resets draw detection state
   void detect_disinfection_cycle_();     // Detects boiler disinfection by monitoring outlet temp
   void check_vacation_mode_();           // Check if entering/exiting vacation mode
@@ -204,18 +237,18 @@ class HotWaterController : public Component {
   void handle_user_request();
   void learn_now();
   void decay_table();
-  void propagate_first_day_();           // Copy first learned day to all other days
   void save_learning_matrix_();          // Save learning matrix to flash
   void load_learning_matrix_();          // Load learning matrix from flash
-  uint32_t calculate_checksum_();        // Calculate checksum for validation
-  void reset_learning_matrix_();         // Reset learning matrix to zero (10+ sec button press)
+  void init_default_pattern_();          // FIX #11: single helper for the typical daily pattern
+  uint32_t calculate_checksum_() const;  // Checksum over learn_[][]
+  static uint32_t calculate_checksum_(const uint8_t (&m)[7][48]);  // Checksum over arbitrary matrix
+  void reset_learning_matrix_();         // Reset learning matrix (10+ sec button press)
   void check_schedule();
   void pump_control();
   void handle_button();
   void toggle_learning();
   void update_leds();
   void log_learning_matrix_();
-
 };
 
 }  // namespace esphome_hotcirc
