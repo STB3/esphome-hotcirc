@@ -25,6 +25,11 @@ external_components:
 
 logger:
   level: INFO
+  logs:
+    # FIX #20: Component-Log-Tag vereinheitlicht auf "hotcirc" (der frühere
+    # Zweit-Tag "hotwater" existiert im neuen .cpp nicht mehr).
+    hotcirc: INFO
+    learning: INFO   # auf DEBUG stellen, um die Lernmatrix im Log zu sehen
 #  hardware_uart: UART0
 #  baud_rate: 115200
 
@@ -538,6 +543,16 @@ script:
             - delay: 1000ms
 
 # === Instantiate component ===
+# Angepasst auf die neue .cpp/.h (FIX-Serie):
+#  - Wasserzapf-Erkennung wird NICHT mehr in der YAML verdrahtet. Die Komponente
+#    hängt sich in setup() selbst per add_on_state_callback() an outlet_temp
+#    (FIX #10). outlet_temp muss nur weiterhin publishen (update_interval 1s) - tut es.
+#  - led_green/led_yellow bleiben gültig (Setter im Header erhalten) - die rote
+#    Variante nutzt weiterhin die physischen Status-LEDs.
+#  - anti_stagnation_interval wurde entfernt (siehe FIX #6 unten).
+# Hinweis (einmalig beim ersten Boot nach dem Update): durch das geänderte
+# LearnMatrixData-Struct (FIX #11) ändert sich der NVS-Key-Hash - die gelernte
+# Matrix wird einmal verworfen und auf das Default-Pattern zurückgesetzt.
 esphome_hotcirc:
   id: hotwater
   outlet_sensor: outlet_temp
@@ -558,12 +573,13 @@ esphome_hotcirc:
   pump_flow_rate: 20.0   # Pump flow rate in liters per minute (L/min)
                          # Measured value: 20 L/min
                          # Used for energy consumption calculation
-  anti_stagnation_interval: 172800  # Anti-stagnation interval in seconds (default: 48 hours)
-                                    # Pump runs for short duration when disabled or in vacation mode
-                                    # to prevent impeller seizure
+  # FIX #6: anti_stagnation_interval entfernt - der Parameter wird vom neuen
+  # Code nicht mehr ausgewertet (Anti-Stagnation läuft auf fixem Wochenplan:
+  # Sonntag 03:00, siehe check_anti_stagnation_() im Component).
   anti_stagnation_runtime: 15       # Anti-stagnation run time in seconds (default: 15 seconds)
                                     # Short run is enough to move impeller and prevent seizure
-  thermal_stagnation_delta: 3.0    # °C: outlet - return < 2°C → Flush
+  thermal_stagnation_delta: 2.0    # °C: (outlet - return) < 2°C → Flush
+                                    # FIX: Wert an Kommentar/uedx4646 angeglichen (vorher 3.0)
   thermal_stagnation_runtime: 30   # Sekunden Pumpenlauf
   thermal_stagnation_min_return: 40.0  # °C Mindestrücklauftemperatur
   thermal_stagnation_cooldown: 1800  # 30 min Sperrzeit nach Flush
