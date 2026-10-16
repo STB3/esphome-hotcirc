@@ -477,6 +477,7 @@
             opacity: 0;
             width: 0;
             height: 0;
+            pointer-events: none;
         }
         
         .switch-slider {
@@ -590,11 +591,11 @@
                             <button class="ha-button" onclick="fetchData()">
                                 <span>↻</span> Refresh Data
                             </button>
-                            <button class="ha-button secondary" onclick="toggleAutoRefresh()">
-                                <label class="ha-switch">
-                                    <input type="checkbox" id="autoRefreshToggle">
+                            <button class="ha-button secondary" onclick="toggleAutoRefresh(event)">
+                                <span class="ha-switch">
+                                    <input type="checkbox" id="autoRefreshToggle" tabindex="-1" aria-hidden="true">
                                     <span class="switch-slider"></span>
-                                </label>
+                                </span>
                                 <span>Auto-refresh</span>
                             </button>
                         </div>
@@ -860,18 +861,20 @@
             `;
         }
 
-        function toggleAutoRefresh() {
+        function toggleAutoRefresh(e) {
+            if (e) e.preventDefault();
             const toggle = document.getElementById('autoRefreshToggle');
-            
-            if (toggle.checked) {
+
+            // State is tracked by the interval handle, not by the checkbox,
+            // so clicks on the switch itself can't invert the logic.
+            if (autoRefreshInterval) {
                 clearInterval(autoRefreshInterval);
                 autoRefreshInterval = null;
-                toggle.checked = false;
             } else {
                 autoRefreshInterval = setInterval(fetchData, 60000);
-                toggle.checked = true;
                 fetchData();
             }
+            toggle.checked = !!autoRefreshInterval;
         }
 
         // Load saved IP from localStorage
