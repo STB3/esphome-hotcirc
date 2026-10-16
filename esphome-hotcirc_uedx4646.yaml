@@ -69,7 +69,7 @@ packages:
 external_components:
   - source:
       type: local
-      path: !secret local_path
+      path: components
     components: [esphome_hotcirc]
 
 logger:
