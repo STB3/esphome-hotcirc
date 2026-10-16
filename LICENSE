@@ -1,0 +1,60 @@
+ESPHome HotCirc
+Copyright (c) 2026 Dirk (STB3) - https://github.com/STB3
+
+This repository contains two kinds of material under different licenses.
+
+1. SOFTWARE - GNU General Public License v3.0 or later
+
+   All source code, including the ESPHome component (components/),
+   YAML configurations and packages (*.yaml, packages/), and the HTML
+   tools (*.html, docs/), is free software: you can redistribute it
+   and/or modify it under the terms of the GNU General Public License
+   as published by the Free Software Foundation, either version 3 of
+   the License, or (at your option) any later version.
+
+   This software is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+   General Public License for more details.
+
+   The full license text is in the file COPYING, or at
+   https://www.gnu.org/licenses/gpl-3.0.txt
+
+   SPDX-License-Identifier: GPL-3.0-or-later
+
+2. HARDWARE, PICTURES AND DOCUMENTATION - CC BY-NC-SA 4.0
+
+   All hardware design files (schematics, PCB layouts, Gerber and
+   drill files, interactive BOM, bills of materials, mechanical
+   parts), all pictures (pictures/), and the documentation
+   (including README.md) are licensed under the
+
+       Creative Commons Attribution-NonCommercial-ShareAlike 4.0
+       International License (CC BY-NC-SA 4.0)
+       https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode
+
+   SPDX-License-Identifier: CC-BY-NC-SA-4.0
+
+   Summary (not a substitute for the license text):
+
+     Permitted:
+       - Building the hardware for personal or household use
+       - Modifying and sharing the design non-commercially, with
+         attribution and under the same license
+
+     Not permitted without a separate written license from the author:
+       - Manufacturing, selling, or offering PCBs, kits, or assembled
+         devices based on this design
+       - Using the design in a commercial product or paid service
+       - Removing the attribution from the PCB or the design files
+
+   Commercial hardware licenses: contact via https://github.com/STB3
+
+THIRD-PARTY COMPONENTS
+  This project builds on ESPHome and other third-party libraries, which
+  remain under their own licenses.
+
+DISCLAIMER
+  The hardware design is provided "AS IS", without warranty of any kind.
+  The author is not liable for any damage arising from its use,
+  including damage to heating or water systems or mains-powered devices.

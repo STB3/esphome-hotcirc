@@ -22,6 +22,7 @@ Three hardware variants are supported, all sharing the same core component.
   - [Button Actions](#button-actions)
 - [Installation](#installation)
 - [Project Structure](#project-structure)
+- [License](#license)
 
 ---
 
@@ -486,3 +487,38 @@ Key internal constants:
 | `LEARN_INC` | 40 | Matrix increment per confirmed water draw |
 | `DECAY` | 0.98 | Daily learning matrix decay factor |
 | `VACATION_THRESHOLD` | 86400s | No-draw duration before entering vacation mode |
+
+---
+
+## License
+
+HotCirc uses two licenses: the **software is open source (GPLv3)**, the **hardware design is non-commercial (CC BY-NC-SA 4.0)**.
+
+| Part | License |
+|---|---|
+| Software: ESPHome component, YAML configurations and packages, HTML tools | [GNU GPL v3.0 or later](https://www.gnu.org/licenses/gpl-3.0.html) |
+| Hardware: schematics, PCB layout, Gerber files, BOM, mechanical parts | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) |
+| Pictures and documentation | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) |
+
+### Hardware: what is allowed
+
+**You may:**
+
+- Build HotCirc hardware for yourself or your own household
+- Modify the design and share your modifications non-commercially, with attribution and under the same license
+
+**You may not, without a written license from the author:**
+
+- Manufacture, sell, or offer HotCirc PCBs, kits, or assembled devices
+- Offer HotCirc hardware as part of a paid product or service, including installation services
+- Remove or hide the attribution on the PCB or in the design files
+
+Commercial hardware licenses are available on request via GitHub ([STB3](https://github.com/STB3)). Original HotCirc hardware is available directly from the author.
+
+### Software
+
+The firmware may be used, modified, and redistributed under the terms of the GPLv3, including on hardware of your own design.
+
+See [LICENSE](LICENSE) for details.
+
+Copyright (c) 2026 Dirk (STB3)
