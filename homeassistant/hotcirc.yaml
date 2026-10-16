@@ -1,0 +1,13 @@
+# packages/hotcirc.yaml
+rest:
+  - resource: "http://192.168.178.141/text_sensor/Learning%20Matrix%20JSON"
+    scan_interval: 300
+    sensor:
+      - name: HotCirc Lernmatrix
+        value_template: "{{ (value_json.value | from_json).eco_level }}"
+        json_attributes: [value]
+
+recorder:
+  exclude:
+    entities:
+      - sensor.hotcirc_lernmatrix
