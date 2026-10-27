@@ -547,6 +547,26 @@ void HotWaterController::handle_user_request() {
   // without checking it, and never trust an invalid timestamp.
   const bool clock_valid = clock_ && clock_->now().is_valid();
 
+  // FIX #23: Vacation-Timer und Vacation-Ausstieg gehoeren zur Wasserentnahme,
+  // nicht zum Lernen. Beides lag vorher in learn_now(), das nur bei
+  // learning_enabled_ aufgerufen wird. Mit deaktiviertem Lernen ging das
+  // System dadurch trotz taeglicher Nutzung nach 24 h in den Urlaubsmodus
+  // und kam nie wieder heraus.
+  //
+  // Ohne gueltige Uhr wird der Timer auf 0 gesetzt: check_vacation_mode_()
+  // initialisiert ihn dann beim naechsten gueltigen Zeitstempel auf "jetzt".
+  // Ein alter Zeitstempel wuerde den Urlaubsmodus sonst sofort wieder
+  // aktivieren.
+  last_water_draw_time_ = clock_valid ? clock_->now().timestamp : 0;
+
+  if (vacation_mode_) {
+    vacation_mode_ = false;
+    ESP_LOGW(TAG, "===========================================");
+    ESP_LOGW(TAG, "EXITING VACATION MODE");
+    ESP_LOGW(TAG, "Water draw detected - resuming normal operation");
+    ESP_LOGW(TAG, "===========================================");
+  }
+
   if (learning_enabled_ && clock_valid)
     learn_now();  // needs a valid time to pick the correct slot
 
@@ -583,17 +603,8 @@ void HotWaterController::learn_now() {
   }
   auto n = clock_->now();
 
-  // Update last water draw timestamp
-  last_water_draw_time_ = n.timestamp;
-
-  // Exit vacation mode if we were in it
-  if (vacation_mode_) {
-    vacation_mode_ = false;
-    ESP_LOGW(TAG, "===========================================");
-    ESP_LOGW(TAG, "EXITING VACATION MODE");
-    ESP_LOGW(TAG, "Water draw detected - resuming normal operation");
-    ESP_LOGW(TAG, "===========================================");
-  }
+  // FIX #23: Vacation-Timer und -Ausstieg sind nach handle_user_request()
+  // verschoben - sie gelten fuer jede Wasserentnahme, auch ohne Lernen.
 
   // Skip learning if disabled
   if (!learning_enabled_) {

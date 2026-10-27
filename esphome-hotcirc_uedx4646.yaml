@@ -457,7 +457,10 @@ button:
     on_press:
       - lambda: |-
           ESP_LOGI("pump_button", "Web UI: Pump run requested");
-          id(hotwater).run_pump();
+          // FIX #24: manual_pump_on() startet mit Trigger MANUAL_WEBUI.
+          // run_pump() ohne Argument nutzt MANUAL_BUTTON - Pump Status
+          // zeigte dann "Manual Button" statt "Web UI".
+          id(hotwater).manual_pump_on();
 
   - platform: template
     name: "Save Learning Matrix"
@@ -677,16 +680,16 @@ binary_sensor:
     filters:
       - delayed_on: 50ms  # Debounce
     internal: true
-    on_click:
-      # Druck auf Displaygehäuse: Pumpe manuell starten
-      min_length: 50ms
-      max_length: 1000ms
-      then:
-        - lambda: |-
-            // Display sofort wecken UND Aktion direkt ausfuehren (kein 2. Druck)
-            id(hotcirc_display_wake).execute();
-            ESP_LOGI("button", "HW button - run pump");
-            id(hotwater).run_pump();
+    # FIX #22: Die Pumpenaktion kommt ausschliesslich aus dem Component
+    # (button: hw_button im esphome_hotcirc-Block, handle_button()):
+    # kurz < 3 s = Pumpe an/aus, 3-10 s = Lernen an/aus, > 10 s = Matrix-Reset.
+    # Vorher rief on_click hier zusaetzlich run_pump() auf - beim Loslassen
+    # sah handle_button() die Pumpe dann bereits laufen und stoppte sie
+    # sofort wieder (Start + Stop bei einem Druck).
+    # Hier nur noch: Display beim Druck wecken. Die Aktion selbst wirkt
+    # trotzdem beim selben Druck (kein zweiter Druck noetig).
+    on_press:
+      - script.execute: hotcirc_display_wake
 
   # Smart plug connectivity status
   - platform: template

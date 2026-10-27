@@ -33,10 +33,16 @@ esp32:
   framework:
     type: esp-idf
 
+# FIX #8/NVS (wie UEDX): Slider-Werte werden persistiert (restore_value: true
+# bei den number-Templates unten). Preference-Writes werden gesammelt und nur
+# alle 5 Minuten geschrieben, um den Flash zu schonen. (ESPHome-Default: 60s.)
+preferences:
+  flash_write_interval: 5min
+
 external_components:
   - source:
       type: local
-      path: !secret local_path
+      path: components
     components: [esphome_hotcirc]
 
 logger:
@@ -80,7 +86,7 @@ captive_portal:
 # HTTP request component for smart plug control
 http_request:
   id: http_client
-  timeout: 2s  # Reduced to prevent watchdog timeout
+  timeout: 1s  # Cap loop stalls when the plug is slow/unreachable (was 2s)
 
 # Global variable to store smart plug IP address (runtime only)
 globals:
@@ -96,6 +102,15 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  # FIX #21: Entprellt die Online/Offline-Erkennung. Der BK7231N-Plug lehnt
+  # gelegentlich einen einzelnen TCP-Connect ab (esp-tls select() timeout),
+  # erholt sich aber im naechsten 60-s-Check. Erst nach OFFLINE_THRESHOLD
+  # aufeinanderfolgenden Fehlern wird der Plug als OFFLINE gemeldet - das
+  # eliminiert das transiente Log-Rauschen.
+  - id: plug_fail_count
+    type: int
+    restore_value: no
+    initial_value: '0'
 
 # === Sensors & Temperature Probes ===
 one_wire:
@@ -147,8 +162,15 @@ sensor:
     unit_of_measurement: "kWh"
     accuracy_decimals: 4
     device_class: energy
-    state_class: total_increasing
+    # FIX #1 (wie UEDX): "measurement" statt "total_increasing". Der Wert gilt
+    # PRO ZYKLUS und faellt zwischen Zyklen; HA wertet jeden Rueckgang bei
+    # total_increasing als Zaehler-Reset und blaeht das Energie-Dashboard auf.
+    # Der delta-Filter verhindert, dass alle 5 s derselbe Wert in die
+    # HA-Datenbank geschrieben wird.
+    state_class: measurement
     icon: "mdi:lightning-bolt"
+    filters:
+      - delta: 0.0001
 
   # Last pump cycle duration
   - platform: template
@@ -160,6 +182,8 @@ sensor:
     unit_of_measurement: "s"
     accuracy_decimals: 0
     icon: "mdi:timer-outline"
+    filters:
+      - delta: 1
 
 
 text_sensor:
@@ -253,35 +277,67 @@ text_sensor:
 switch:
   # Smart plug control via HTTP (replaces GPIO relay)
   # IP address can be configured via "Smart Plug IP Address" text input
+  # FIX #19: das leere state-Lambda entfernt - "optimistic: true" uebernimmt
+  # die State-Verwaltung, ein Lambda daneben ist widerspruechlich.
+  # FIX #18: HTTP-Requests nur absetzen, wenn WiFi verbunden ist. Vorher
+  # feuerte restore_mode ALWAYS_OFF beim Boot einen POST ins Leere
+  # (garantierter Fehler-Log bei jedem Start). Ein uebersprungenes Kommando
+  # ist unkritisch: check_smart_plug_script gleicht den Relaiszustand ohnehin
+  # alle 60 s ab und sendet den Soll-Zustand bei Abweichung erneut.
   - platform: template
     id: pump_relay
     name: "Pump Relay (HTTP)"
     restore_mode: ALWAYS_OFF  # Safety: ensure pump is off on boot
     internal: true  # Hide from UI - controlled internally
-    turn_on_action:
-      - http_request.post:
-          url: !lambda |-
-            return "http://" + id(smart_plug_ip) + "/switch/relay/turn_on";
-          body: ""
-          on_error:
-            - logger.log:
-                format: "HTTP Error: Failed to turn ON smart plug"
-                level: ERROR
-
-    turn_off_action:
-      - http_request.post:
-          url: !lambda |-
-            return "http://" + id(smart_plug_ip) + "/switch/relay/turn_off";
-          body: ""
-          on_error:
-            - logger.log:
-                format: "HTTP Error: Failed to turn OFF smart plug"
-                level: ERROR
-    lambda: |-
-      // Return current state (track internally since we can't query the plug)
-      // The hotcirc component will manage the state
-      return {};
     optimistic: true  # Assume state changes succeed
+    turn_on_action:
+      - if:
+          condition:
+            lambda: 'return id(wifi_connected);'
+          then:
+            - http_request.post:
+                url: !lambda |-
+                  return "http://" + id(smart_plug_ip) + "/switch/relay/turn_on";
+                body: ""
+                on_error:
+                  # FIX #21: Statt bis zu 60 s auf die periodische Reconciliation
+                  # zu warten, hier nach 3 s gezielt nachpruefen. delay yieldet
+                  # (nicht-blockierend); check_smart_plug_script sendet bei
+                  # plug=OFF/expected=ON den Befehl erneut. 60-s-Interval bleibt
+                  # als Backstop, falls auch der schnelle Retry scheitert.
+                  - logger.log:
+                      format: "HTTP Error: turn ON failed - fast reconcile queued"
+                      level: ERROR
+                      tag: "smart_plug"
+                  - delay: 3s
+                  - script.execute: check_smart_plug_script
+          else:
+            - logger.log:
+                format: "WiFi down - ON command deferred, reconciliation will re-send"
+                level: WARN
+                tag: "smart_plug"
+    turn_off_action:
+      - if:
+          condition:
+            lambda: 'return id(wifi_connected);'
+          then:
+            - http_request.post:
+                url: !lambda |-
+                  return "http://" + id(smart_plug_ip) + "/switch/relay/turn_off";
+                body: ""
+                on_error:
+                  # FIX #21: siehe turn_on_action - schneller Reconcile nach 3 s.
+                  - logger.log:
+                      format: "HTTP Error: turn OFF failed - fast reconcile queued"
+                      level: ERROR
+                      tag: "smart_plug"
+                  - delay: 3s
+                  - script.execute: check_smart_plug_script
+          else:
+            - logger.log:
+                format: "WiFi down - OFF command deferred, reconciliation will re-send"
+                level: WARN
+                tag: "smart_plug"
 
   # Master enable/disable switch for pump operation
   - platform: template
@@ -308,7 +364,10 @@ button:
     on_press:
       - lambda: |-
           ESP_LOGI("pump_button", "Web UI: Pump run requested");
-          id(hotwater).run_pump();
+          // FIX #24: manual_pump_on() startet mit Trigger MANUAL_WEBUI.
+          // run_pump() ohne Argument nutzt MANUAL_BUTTON - Pump Status
+          // zeigte dann "Manual Button" statt "Web UI".
+          id(hotwater).manual_pump_on();
 
   - platform: template
     name: "Save Learning Matrix"
@@ -365,7 +424,14 @@ text:
           }
     entity_category: config
 
+# FIX #8 (wie UEDX): restore_value: true bei allen Konfig-Slidern. Vorher
+# gingen alle Nutzer-Einstellungen bei jedem Reboot verloren (Reset auf
+# initial_value). on_value feuert auch beim Restore, damit landet der
+# persistierte Wert im C++-Component. initial_value greift nur noch beim
+# allerersten Boot.
 number:
+  # FIX #26: Slider-Definitionen (Bereiche, Schrittweiten, Icons, Modus)
+  # identisch mit UEDX4646 - alle Varianten verhalten sich gleich.
   - platform: template
     name: "Outlet Rise Threshold"
     id: outlet_rise_config
@@ -374,6 +440,7 @@ number:
     max_value: 3.0
     step: 0.1
     initial_value: 1.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "°C"
     mode: slider
@@ -390,6 +457,7 @@ number:
     max_value: 15.0
     step: 0.5
     initial_value: 5.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "°C"
     mode: slider
@@ -399,48 +467,51 @@ number:
           ESP_LOGI("config", "Return rise target changed to %.1f°C", x);
 
   - platform: template
-    name: "Min Return Temperature"
-    id: min_return_temp_config
-    icon: "mdi:thermometer-low"
-    min_value: 25.0
-    max_value: 40.0
-    step: 1.0
-    initial_value: 30.0
-    optimistic: true
-    unit_of_measurement: "°C"
-    mode: slider
-    on_value:
-      - lambda: |-
-          id(hotwater).min_return_temp_ = x;
-          ESP_LOGI("config", "Min return temperature changed to %.1f°C", x);
-
-  - platform: template
     name: "Disinfection Temp Rise"
-    id: disinfection_temp_rise_config
-    icon: "mdi:biohazard"
-    min_value: 5.0
+    id: disinfection_temp_config
+    icon: "mdi:water-boiler"
+    min_value: 8.0
     max_value: 20.0
     step: 1.0
     initial_value: 10.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "°C"
     mode: slider
     on_value:
       - lambda: |-
           id(hotwater).disinfection_temp_threshold_ = x;
-          ESP_LOGI("config", "Disinfection temp rise changed to %.1f°C", x);
+          ESP_LOGI("config", "Disinfection temperature rise changed to %.1f°C", x);
+
+  - platform: template
+    name: "Minimum Return Temp"
+    id: min_return_temp_config
+    icon: "mdi:thermometer-low"
+    min_value: 20.0
+    max_value: 40.0
+    step: 1.0
+    initial_value: 30.0
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "°C"
+    mode: slider
+    on_value:
+      - lambda: |-
+          id(hotwater).min_return_temp_ = x;
+          ESP_LOGI("config", "Minimum return temperature changed to %.1f°C", x);
 
   - platform: template
     name: "Pump Flow Rate"
     id: pump_flow_rate_config
-    icon: "mdi:waves-arrow-right"
-    min_value: 5.0
+    icon: "mdi:water-pump"
+    min_value: 10.0
     max_value: 40.0
     step: 1.0
     initial_value: 20.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "L/min"
-    mode: box
+    mode: slider
     on_value:
       - lambda: |-
           id(hotwater).pump_flow_rate_ = x;
@@ -454,6 +525,7 @@ number:
     max_value: 255
     step: 5
     initial_value: 120
+    restore_value: true
     optimistic: true
     mode: slider
     on_value:
@@ -818,10 +890,12 @@ binary_sensor:
     filters:
       - delayed_on: 50ms  # Debounce
     internal: true
-    on_press:
-      - lambda: |-
-          ESP_LOGI("button", "Hardware button pressed - requesting pump run");
-          id(hotwater).run_pump();
+    # FIX #22: Kein eigenes on_press mehr. Die Pumpenaktion kommt
+    # ausschliesslich aus dem Component (button: hw_button im
+    # esphome_hotcirc-Block, handle_button()):
+    # kurz < 3 s = Pumpe an/aus, 3-10 s = Lernen an/aus, > 10 s = Matrix-Reset.
+    # Vorher startete on_press die Pumpe beim Druecken, und handle_button()
+    # stoppte sie beim Loslassen sofort wieder (Start + Stop bei einem Druck).
 
   # Smart plug connectivity status
   - platform: template
@@ -833,20 +907,28 @@ binary_sensor:
       return id(smart_plug_connected);
 
 
+# FIX #20 (wie UEDX): Europe/Berlin und de-Pool statt Amsterdam/nl-Pool.
+# (Gleicher UTC-Offset, aber konsistent.)
 time:
   - platform: sntp
     id: sntp_time
-    timezone: Europe/Amsterdam
-    servers: ["0.nl.pool.ntp.org", "1.nl.pool.ntp.org", "2.nl.pool.ntp.org"]
+    timezone: Europe/Berlin
+    servers: ["0.de.pool.ntp.org", "1.de.pool.ntp.org", "2.de.pool.ntp.org"]
     on_time_sync:
       - logger.log: "Time synchronized"
 
 # Check smart plug connectivity AND relay state every 60 seconds.
 # On state mismatch the last commanded state is re-sent (controller is master).
+# FIX #18: nur bei bestehender WiFi-Verbindung - vorher lief der Check auch
+# offline und produzierte alle 60 s einen Fehler-Log.
 interval:
   - interval: 60s
     then:
-      - script.execute: check_smart_plug_script
+      - if:
+          condition:
+            lambda: 'return id(wifi_connected);'
+          then:
+            - script.execute: check_smart_plug_script
 
 script:
   - id: ap_mode_blink
@@ -911,14 +993,27 @@ script:
           on_response:
             then:
               - lambda: |-
+                  // FIX #21: 2 aufeinanderfolgende Fehler noetig, bevor OFFLINE
+                  // gemeldet wird. Ein unerwarteter Status zaehlt wie ein
+                  // Transport-Fehler, markiert aber nicht sofort offline.
+                  const int OFFLINE_THRESHOLD = 2;
+
                   if (response->status_code != 200) {
-                    ESP_LOGW("smart_plug", "Unexpected HTTP status %d from smart plug", response->status_code);
-                    id(smart_plug_connected) = false;
-                    id(smart_plug_status).publish_state(false);
+                    id(plug_fail_count)++;
+                    if (id(plug_fail_count) >= OFFLINE_THRESHOLD && id(smart_plug_connected)) {
+                      ESP_LOGW("smart_plug", "Smart plug is now OFFLINE (HTTP status %d, %d consecutive fails)",
+                               response->status_code, id(plug_fail_count));
+                      id(smart_plug_connected) = false;
+                      id(smart_plug_status).publish_state(false);
+                    } else {
+                      ESP_LOGD("smart_plug", "Unexpected HTTP status %d (fail #%d) - tolerating",
+                               response->status_code, id(plug_fail_count));
+                    }
                     return;
                   }
 
-                  // --- Reachability OK ---
+                  // --- Reachability OK: Fehlerzaehler zuruecksetzen ---
+                  id(plug_fail_count) = 0;
                   if (!id(smart_plug_connected)) {
                     ESP_LOGI("smart_plug", "Smart plug is now ONLINE");
                   }
@@ -952,11 +1047,21 @@ script:
           on_error:
             then:
               - lambda: |-
-                  if (id(smart_plug_connected)) {
-                    ESP_LOGW("smart_plug", "Smart plug is now OFFLINE");
+                  // FIX #21: transiente Connect-Fehler (esp-tls select() timeout)
+                  // tolerieren - erst nach OFFLINE_THRESHOLD Fehlern melden.
+                  const int OFFLINE_THRESHOLD = 2;
+                  id(plug_fail_count)++;
+                  if (id(plug_fail_count) >= OFFLINE_THRESHOLD) {
+                    if (id(smart_plug_connected)) {
+                      ESP_LOGW("smart_plug", "Smart plug is now OFFLINE (after %d consecutive fails)",
+                               id(plug_fail_count));
+                    }
+                    id(smart_plug_connected) = false;
+                    id(smart_plug_status).publish_state(false);
+                  } else {
+                    ESP_LOGD("smart_plug", "Transient plug error #%d - tolerating, retry next cycle",
+                             id(plug_fail_count));
                   }
-                  id(smart_plug_connected) = false;
-                  id(smart_plug_status).publish_state(false);
 
 
 # === Instantiate HotCirc Component ===
@@ -979,13 +1084,13 @@ esphome_hotcirc:
   pump_flow_rate: 20.0   # Pump flow rate in liters per minute (L/min)
                          # Measured value: 20 L/min
                          # Used for energy consumption calculation
-  anti_stagnation_interval: 172800  # Anti-stagnation interval in seconds (default: 48 hours)
-                                    # Pump runs for short duration when disabled or in vacation mode
-                                    # to prevent impeller seizure
+  # FIX #6 (wie UEDX/Red): anti_stagnation_interval entfernt - der Parameter
+  # wird vom Code nicht mehr ausgewertet (Anti-Stagnation laeuft auf fixem
+  # Wochenplan: Sonntag 03:00, siehe check_anti_stagnation_() im Component).
   anti_stagnation_runtime: 15       # Anti-stagnation run time in seconds (default: 15 seconds)
                                     # Short run is enough to move impeller and prevent seizure
   thermal_stagnation_delta: 2.0    # °C: outlet - return < 2°C → Flush
   thermal_stagnation_runtime: 10   # Sekunden Pumpenlauf
   thermal_stagnation_min_return: 40.0  # °C Mindestrücklauftemperatur
   thermal_stagnation_cooldown: 1800  # 30 min Sperrzeit nach Flush
-  
+  

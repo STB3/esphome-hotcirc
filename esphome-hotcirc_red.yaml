@@ -17,6 +17,12 @@ esp32:
   framework:
     type: esp-idf
 
+# FIX #8/NVS (wie UEDX): Slider-Werte werden persistiert (restore_value: true
+# bei den number-Templates unten). Preference-Writes werden gesammelt und nur
+# alle 5 Minuten geschrieben, um den Flash zu schonen. (ESPHome-Default: 60s.)
+preferences:
+  flash_write_interval: 5min
+
 external_components:
   - source:
       type: local
@@ -243,8 +249,15 @@ sensor:
     unit_of_measurement: "kWh"
     accuracy_decimals: 4
     device_class: energy
-    state_class: total_increasing
+    # FIX #1 (wie UEDX): "measurement" statt "total_increasing". Der Wert gilt
+    # PRO ZYKLUS und faellt zwischen Zyklen; HA wertet jeden Rueckgang bei
+    # total_increasing als Zaehler-Reset und blaeht das Energie-Dashboard auf.
+    # Der delta-Filter verhindert, dass alle 5 s derselbe Wert in die
+    # HA-Datenbank geschrieben wird.
+    state_class: measurement
     icon: "mdi:lightning-bolt"
+    filters:
+      - delta: 0.0001
 
   # Last pump cycle duration
   - platform: template
@@ -256,6 +269,8 @@ sensor:
     unit_of_measurement: "s"
     accuracy_decimals: 0
     icon: "mdi:timer-outline"
+    filters:
+      - delta: 1
 
 
 text_sensor:
@@ -378,7 +393,10 @@ button:
     on_press:
       - lambda: |-
           ESP_LOGI("pump_button", "Web UI: Pump run requested");
-          id(hotwater).run_pump();
+          // FIX #24: manual_pump_on() startet mit Trigger MANUAL_WEBUI.
+          // run_pump() ohne Argument nutzt MANUAL_BUTTON - Pump Status
+          // zeigte dann "Manual Button" statt "Web UI".
+          id(hotwater).manual_pump_on();
 
   - platform: template
     name: "Save Learning Matrix"
@@ -396,7 +414,14 @@ button:
     id: button_safe_mode
     name: Safe Mode Boot
 
+# FIX #8 (wie UEDX): restore_value: true bei allen Konfig-Slidern. Vorher
+# gingen alle Nutzer-Einstellungen bei jedem Reboot verloren (Reset auf
+# initial_value). on_value feuert auch beim Restore, damit landet der
+# persistierte Wert im C++-Component. initial_value greift nur noch beim
+# allerersten Boot.
 number:
+  # FIX #26: Slider-Definitionen (Bereiche, Schrittweiten, Icons, Modus)
+  # identisch mit UEDX4646 - alle Varianten verhalten sich gleich.
   - platform: template
     name: "Outlet Rise Threshold"
     id: outlet_rise_config
@@ -405,6 +430,7 @@ number:
     max_value: 3.0
     step: 0.1
     initial_value: 1.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "°C"
     mode: slider
@@ -421,6 +447,7 @@ number:
     max_value: 15.0
     step: 0.5
     initial_value: 5.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "°C"
     mode: slider
@@ -430,48 +457,51 @@ number:
           ESP_LOGI("config", "Return rise target changed to %.1f°C", x);
 
   - platform: template
-    name: "Min Return Temperature"
-    id: min_return_temp_config
-    icon: "mdi:thermometer-low"
-    min_value: 25.0
-    max_value: 40.0
-    step: 1.0
-    initial_value: 30.0
-    optimistic: true
-    unit_of_measurement: "°C"
-    mode: slider
-    on_value:
-      - lambda: |-
-          id(hotwater).min_return_temp_ = x;
-          ESP_LOGI("config", "Min return temperature changed to %.1f°C", x);
-
-  - platform: template
     name: "Disinfection Temp Rise"
-    id: disinfection_temp_rise_config
-    icon: "mdi:biohazard"
-    min_value: 5.0
+    id: disinfection_temp_config
+    icon: "mdi:water-boiler"
+    min_value: 8.0
     max_value: 20.0
     step: 1.0
     initial_value: 10.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "°C"
     mode: slider
     on_value:
       - lambda: |-
           id(hotwater).disinfection_temp_threshold_ = x;
-          ESP_LOGI("config", "Disinfection temp rise changed to %.1f°C", x);
+          ESP_LOGI("config", "Disinfection temperature rise changed to %.1f°C", x);
+
+  - platform: template
+    name: "Minimum Return Temp"
+    id: min_return_temp_config
+    icon: "mdi:thermometer-low"
+    min_value: 20.0
+    max_value: 40.0
+    step: 1.0
+    initial_value: 30.0
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "°C"
+    mode: slider
+    on_value:
+      - lambda: |-
+          id(hotwater).min_return_temp_ = x;
+          ESP_LOGI("config", "Minimum return temperature changed to %.1f°C", x);
 
   - platform: template
     name: "Pump Flow Rate"
     id: pump_flow_rate_config
-    icon: "mdi:waves-arrow-right"
-    min_value: 5.0
+    icon: "mdi:water-pump"
+    min_value: 10.0
     max_value: 40.0
     step: 1.0
     initial_value: 20.0
+    restore_value: true
     optimistic: true
     unit_of_measurement: "L/min"
-    mode: box
+    mode: slider
     on_value:
       - lambda: |-
           id(hotwater).pump_flow_rate_ = x;
@@ -485,6 +515,7 @@ number:
     max_value: 255
     step: 5
     initial_value: 120
+    restore_value: true
     optimistic: true
     mode: slider
     on_value:
@@ -520,11 +551,13 @@ binary_sensor:
       - delayed_on: 50ms  # Debounce
     internal: true  # Hidden - LED provides sufficient feedback
 
+# FIX #20 (wie UEDX): Europe/Berlin und de-Pool statt Amsterdam/nl-Pool.
+# (Gleicher UTC-Offset, aber konsistent.)
 time:
   - platform: sntp
     id: sntp_time
-    timezone: Europe/Amsterdam
-    servers: ["0.nl.pool.ntp.org", "1.nl.pool.ntp.org", "2.nl.pool.ntp.org"]
+    timezone: Europe/Berlin
+    servers: ["0.de.pool.ntp.org", "1.de.pool.ntp.org", "2.de.pool.ntp.org"]
     on_time_sync:
       - logger.log: "Time synchronized"
 
