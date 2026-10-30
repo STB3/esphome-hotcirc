@@ -38,12 +38,14 @@ A Home Assistant state is limited to 255 characters. The matrix JSON is much lon
 Open this address in a browser:
 
 ```
-http://<HOTCIRC-IP>/text_sensor/learning_matrix_json
+http://<HOTCIRC-IP>/text_sensor/Learning%20Matrix%20JSON
 ```
 
 The response must be JSON with a `"value"` field that itself contains JSON, such as `"value": "{\"days\":[...],\"eco_level\":120}"`.
 
-The path depends on the name of the text sensor in your ESPHome YAML. If the address above does not return JSON, try `/text_sensor/Learning%20Matrix%20JSON` or `/text_sensor/learning%20matrix%20json`. Use whichever variant returns JSON in the browser.
+The path is the **name of the text sensor** exactly as set under `name:` in your ESPHome YAML. Keep upper and lower case as they are and write spaces as `%20`. If you renamed the sensor, adjust the path accordingly.
+
+> **Note:** Older instructions use the object ID, i.e. `/text_sensor/learning_matrix_json`. This format is deprecated and is no longer supported from ESPHome 2026.7.0. On older firmware it still works but logs the warning `Deprecated URL format` on the device. Always use the entity name instead.
 
 ### 2. Copy the card
 
@@ -69,7 +71,7 @@ Then create the folder `/config/packages/`.
 ```yaml
 # HotCirc – learning matrix for the heatmap card
 rest:
-  - resource: http://<HOTCIRC-IP>/text_sensor/learning_matrix_json
+  - resource: http://<HOTCIRC-IP>/text_sensor/Learning%20Matrix%20JSON
     scan_interval: 300
     sensor:
       - name: HotCirc Lernmatrix
@@ -85,6 +87,7 @@ recorder:
 ```
 
 - Replace `<HOTCIRC-IP>` with the real IP and, if needed, the path from step 1.
+- Write spaces in the path as `%20`, not as literal spaces.
 - `scan_interval: 300` polls the matrix every 5 minutes. That is enough because the matrix only changes slowly.
 
 > **Note:** If `configuration.yaml` already contains a `recorder:` block with `exclude: entities:`, the two will conflict. Home Assistant does not deep-merge packages. In that case, remove the `recorder` block from the package and add the entity to the central `configuration.yaml` instead.
@@ -156,6 +159,10 @@ The card takes its colors and light/dark mode from the active Home Assistant the
 | `recorder` block or a new package | Restart Home Assistant |
 
 ## Troubleshooting
+
+### Device log: `Deprecated URL format: /text_sensor/learning_matrix_json`
+
+`resource:` still contains the old object-ID URL. Replace it with the entity name, i.e. `/text_sensor/Learning%20Matrix%20JSON` (see step 1), and reload the RESTful entities. From ESPHome 2026.7.0 on, the old URL no longer returns data.
 
 ### `Custom element doesn't exist: hotcirc-heatmap-card`
 

@@ -388,7 +388,7 @@ Below the heatmap, summary statistics are shown:
 
 ### How it works
 
-The page fetches the `Learning Matrix JSON` text sensor from the device's ESPHome web server at `/text_sensor/learning_matrix_json`. The sensor updates every 5 minutes and immediately when the ECO level changes. It contains the ECO level and the full 7x48 matrix:
+The page fetches the `Learning Matrix JSON` text sensor from the device's ESPHome web server at `/text_sensor/Learning%20Matrix%20JSON` (entity name, URL-encoded). The sensor updates every 5 minutes and immediately when the ECO level changes. It contains the ECO level and the full 7x48 matrix:
 
 ```json
 {

@@ -38,12 +38,14 @@ Ein HA-State darf höchstens 255 Zeichen lang sein. Die Matrix als JSON ist deut
 Ruf im Browser diese Adresse auf:
 
 ```
-http://<HOTCIRC-IP>/text_sensor/learning_matrix_json
+http://<HOTCIRC-IP>/text_sensor/Learning%20Matrix%20JSON
 ```
 
 Als Antwort muss JSON mit einem Feld `"value"` kommen, das selbst wieder JSON enthält, etwa `"value": "{\"days\":[...],\"eco_level\":120}"`.
 
-Der Pfad hängt vom Namen des Text-Sensors in der ESPHome-YAML ab. Liefert die Adresse oben kein JSON, probiere `/text_sensor/Learning%20Matrix%20JSON` oder `/text_sensor/learning%20matrix%20json`. Nimm die Variante, die im Browser JSON zurückgibt.
+Der Pfad besteht aus dem **Namen des Text-Sensors**, so wie er unter `name:` in der ESPHome-YAML steht. Groß- und Kleinschreibung bleiben erhalten, Leerzeichen werden als `%20` geschrieben. Hast du den Sensor umbenannt, passt du den Pfad entsprechend an.
+
+> **Hinweis:** Ältere Anleitungen verwenden die Object-ID, also `/text_sensor/learning_matrix_json`. Dieses Format ist veraltet und wird ab ESPHome 2026.7.0 nicht mehr unterstützt. Auf älteren Firmware-Ständen funktioniert es noch, erzeugt im Gerätelog aber die Warnung `Deprecated URL format`. Verwende deshalb immer den Entitätsnamen.
 
 ### 2. Kachel kopieren
 
@@ -69,7 +71,7 @@ Lege anschließend den Ordner `/config/packages/` an.
 ```yaml
 # HotCirc – Lernmatrix für die Heatmap-Kachel
 rest:
-  - resource: http://<HOTCIRC-IP>/text_sensor/learning_matrix_json
+  - resource: http://<HOTCIRC-IP>/text_sensor/Learning%20Matrix%20JSON
     scan_interval: 300
     sensor:
       - name: HotCirc Lernmatrix
@@ -85,6 +87,7 @@ recorder:
 ```
 
 - Ersetze `<HOTCIRC-IP>` durch die echte IP und gegebenenfalls den Pfad aus Schritt 1.
+- Schreib Leerzeichen im Pfad als `%20`, nicht als echte Leerzeichen.
 - `scan_interval: 300` fragt die Matrix alle 5 Minuten ab. Das reicht, weil sie sich nur langsam ändert.
 
 > **Hinweis:** Steht in der `configuration.yaml` bereits ein Block `recorder:` mit `exclude: entities:`, kommt es zu einem Konflikt. Home Assistant führt Packages nicht tief zusammen. In dem Fall nimmst du den `recorder`-Block aus dem Package heraus und trägst die Entität zentral in der `configuration.yaml` ein.
@@ -156,6 +159,10 @@ Die Kachel übernimmt Farben und Hell/Dunkel-Modus aus dem aktiven HA-Theme. Slo
 | `recorder`-Block oder neues Package | Home Assistant neu starten |
 
 ## Fehlerbehebung
+
+### Gerätelog: `Deprecated URL format: /text_sensor/learning_matrix_json`
+
+In `resource:` steht noch die alte Object-ID-URL. Ersetze sie durch den Entitätsnamen, also `/text_sensor/Learning%20Matrix%20JSON` (siehe Schritt 1), und lade die REST-Entitäten neu. Ab ESPHome 2026.7.0 liefert die alte URL keine Daten mehr.
 
 ### `Custom element doesn't exist: hotcirc-heatmap-card`
 

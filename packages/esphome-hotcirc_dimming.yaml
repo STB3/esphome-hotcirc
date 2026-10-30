@@ -20,22 +20,26 @@
 #    daher weckt jede Beruehrung zuverlaessig auf.
 #
 #  Aufwecken zusaetzlich automatisch:
-#    - Pumpenstart (steigende Flanke pump_running_) weckt das Display
-#      (im 1s-Manager unten; re-dimmt 30 s nach dem letzten Input wieder).
+#    - Pumpenstart (steigende Flanke pump_running_) weckt das Display.
+#    - FIX #25: Das Display bleibt hell, SOLANGE die Pumpe laeuft, plus
+#      ${display_hold_after_pump_ms} ms Nachlauf nach dem Pumpenstopp. Erst danach (und
+#      nur wenn auch ${dim_delay_ms} ms ohne Benutzereingabe vergangen sind)
+#      wird wieder gedimmt. Vorher re-dimmte das Display 30 s nach dem
+#      Pumpenstart, auch wenn die Pumpe noch lief.
 #
 #  -------------------------------------------------------------------------
 #  EINBINDUNG  (in esphome-hotcirc_uedx4646.yaml):
 #      packages:
-#        gui:      !include packages\esphome-hotcirc_gui.yaml
-#        dimming:  !include packages\esphome-hotcirc_dimming.yaml   # <-- NEU
+#        gui:      !include packages/esphome-hotcirc_gui.yaml
+#        dimming:  !include packages/esphome-hotcirc_dimming.yaml
 #
-#  KLEINE Eingriffe in der Hauptdatei (fuer Button-/Encoder-Wake) – siehe
-#  Patch-Snippets in der Begleitnachricht: hw_button on_click und die beiden
+#  Wake-Aufrufe in der Hauptdatei: hw_button on_press und die beiden
 #  rotary_encoder-Handler rufen hotcirc_display_wake auf.
 #
 #  Referenzierte IDs aus den anderen Dateien:
 #    disp1               (display, mipi_spi)
 #    display_brightness  (number, 10..255 – dein Aktiv-Helligkeitswert)
+#    hotwater            (esphome_hotcirc, pump_running_)
 #  Bereitgestellt fuer die GUI-Datei:
 #    disp_stage          (global int)
 #    hotcirc_display_wake(script)
@@ -49,6 +53,7 @@
 substitutions:
   dim_delay_ms:    "30000"    # Inaktivitaet bis Stufe 1 (DIM)   – 30 s
   dark_delay_ms:   "300000"   # Inaktivitaet bis Stufe 2 (DARK)  – 5 min
+  display_hold_after_pump_ms:    "10000"    # FIX #25: Nachlauf nach Pumpenstopp – 10 s
   dim_factor:      "0.25"     # DIM-Helligkeit = Aktiv * Faktor
   dim_floor:       "8"        # DIM nie unter diesen Wert (Panel-Minimum)
   dark_brightness: "0"        # DARK-Helligkeit (0 = praktisch aus; bei
@@ -70,6 +75,13 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  # FIX #25: Zeitstempel (millis), zu dem die Pumpe zuletzt als laufend
+  # gesehen wurde. Waehrend des Laufs jede Sekunde nachgefuehrt; nach dem
+  # Stopp bleibt er stehen und definiert den Nachlauf (display_hold_after_pump_ms).
+  - id: pump_last_on_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
   # Zeitstempel der letzten Aktivitaet (millis). Wird bei JEDER Beruehrung
   # (touchscreen on_touch, schon beim Druck), bei Encoder/Button und beim
   # Aufwecken gesetzt. Ersetzt die unzuverlaessige LVGL-Inaktivitaetszeit.
@@ -121,12 +133,21 @@ switch:
 #  (touchscreen on_touch) gesetzt -> waehrend einer Beruehrung kann der
 #  Manager die Stufe nicht umschalten, der Button-Guard liest beim Klick
 #  also immer den korrekten disp_stage. Kein Re-Dim-Flackern mehr.
+#
+#  FIX #25: Solange die Pumpe laeuft bzw. der Nachlauf (display_hold_after_pump_ms) noch
+#  nicht abgelaufen ist, wird NICHT gedimmt. Die Benutzer-Inaktivitaet
+#  (last_active_ms) bleibt davon unberuehrt, d. h. nach Ende des Nachlaufs
+#  dimmt das Display sofort, falls laenger als dim_delay nichts bedient wurde
+#  - sonst wie gewohnt dim_delay nach der letzten Eingabe.
+#  Aufloesung: 1-s-Tick -> effektiver Nachlauf 10..11 s.
 # -----------------------------------------------------------------------------
 interval:
   - interval: 1s
     id: hotcirc_dim_manager
     then:
       - lambda: |-
+          uint32_t now = millis();
+
           // Pumpenstart (steigende Flanke) -> Display wecken
           bool running = id(hotwater).pump_running_;
           if (running && !id(last_pump_running)) {
@@ -134,9 +155,19 @@ interval:
           }
           id(last_pump_running) = running;
 
-          uint32_t inactive = millis() - id(last_active_ms);
+          // FIX #25: Pumpe laeuft -> Zeitstempel nachfuehren (Nachlauf-Basis)
+          if (running) {
+            id(pump_last_on_ms) = now;
+          }
+          // Haltezeit aktiv, solange Pumpe laeuft oder Nachlauf noch nicht um.
+          // Rollover-sichere uint32-Differenz.
+          bool display_hold = running ||
+              (id(pump_last_on_ms) != 0 &&
+               (now - id(pump_last_on_ms)) < (uint32_t)${display_hold_after_pump_ms});
+
+          uint32_t inactive = now - id(last_active_ms);
           int stage = id(disp_stage);
-          if (stage == 0 && inactive >= (uint32_t)${dim_delay_ms}) {
+          if (stage == 0 && !display_hold && inactive >= (uint32_t)${dim_delay_ms}) {
             id(hotcirc_enter_dim).execute();
           } else if (stage == 1 && inactive >= (uint32_t)${dark_delay_ms}) {
             // DARK nur, wenn der UI-Schalter es erlaubt. Sonst bleibt das

@@ -1,6 +1,6 @@
 # packages/hotcirc.yaml
 rest:
-  - resource: "http://192.168.178.141/text_sensor/Learning%20Matrix%20JSON"
+  - resource: "http://<HOTCIRC-IP>/text_sensor/Learning%20Matrix%20JSON"
     scan_interval: 300
     sensor:
       - name: HotCirc Lernmatrix
