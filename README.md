@@ -319,7 +319,7 @@ It runs on a fixed weekly schedule: **Sunday between 03:00 and 03:05**, once per
 
 ## Smart Plug Control
 
-The M5StickC Plus2 and UEDX4646 variants switch the pump through an ESPHome-based smart plug using the ESPHome web server REST API. The plug's relay switch must have the ID `relay`:
+The M5StickC Plus2 and UEDX4646 variants switch the pump through an ESPHome-based smart plug using the ESPHome web server REST API. The plug's relay switch must have the **name** `relay` (`name: "relay"`), because the web server addresses entities by their name, not by their `id:`:
 
 | Request | Purpose |
 |---|---|
@@ -596,7 +596,7 @@ This applies to all three variants. The LED feedback is only available on the Re
 
 4. For the M5StickC/UEDX variants, prepare the smart plug:
    - Flash the plug with ESPHome and enable `web_server`
-   - Give its relay switch the ID `relay` (see [Smart Plug Control](#smart-plug-control))
+   - Give its relay switch the name `relay` (see [Smart Plug Control](#smart-plug-control))
    - Assign it a fixed IP address
    - Enter the IP in the HotCirc web UI after the first boot
 
