@@ -21,6 +21,7 @@ Three hardware variants are supported, all sharing the same core component.
   - [Anti-Stagnation](#anti-stagnation)
   - [Operating Modes at a Glance](#operating-modes-at-a-glance)
 - [Smart Plug Control](#smart-plug-control)
+  - [Recommended Smart Plug: Nous A1T](#recommended-smart-plug-nous-a1t)
 - [Learning Matrix Heatmap](#learning-matrix-heatmap)
 - [Home Assistant Integration](#home-assistant-integration)
 - [Configuration](#configuration)
@@ -591,40 +592,35 @@ This applies to all three variants. The LED feedback is only available on the Re
 - A recent [ESPHome](https://esphome.io/) release (the configurations use `one_wire` + `dallas_temp`, `web_server` version 3, and on the UEDX variant `mipi_spi` and LVGL)
 - One of the three supported boards
 - Two DS18B20 temperature sensors
-- A Vortex BWO155 circulation pump with the special PCB (Red variant) or an ESPHome-based smart plug (M5StickC/UEDX variants)
+- A Vortex BWO155 circulation pump with the special PCB (Red variant) or an ESPHome-based smart plug (M5StickC/UEDX variants, see [Recommended Smart Plug](#recommended-smart-plug-nous-a1t))
 
 ### Steps
 
 1. Clone or download this repository.
 
-2. Create a `secrets.yaml` next to the variant YAML files:
-   ```yaml
-   wifi_ssid: "YourNetwork"
-   wifi_password: "YourPassword"
-   local_path: /path/to/esphome-hotcirc/components   # used by Red and M5StickC
-   ```
-   The UEDX variant references the component with the relative path `components` and does not need `local_path`. `secrets.yaml` is excluded from Git by `.gitignore`.
-
-3. Configure the DS18B20 sensors:
+2. Configure the DS18B20 sensors:
    - **Red / M5StickC:** both sensors share one bus. Replace the `address:` values with those of your sensors. The addresses of all devices found on the bus are listed in the ESPHome log at boot.
    - **UEDX:** each sensor has its own bus (GPIO39 outlet, GPIO40 return), no address needs to be configured.
 
-4. For the M5StickC/UEDX variants, prepare the smart plug:
+3. For the M5StickC/UEDX variants, prepare the smart plug:
    - Flash the plug with ESPHome and enable `web_server`
    - Give its relay switch the name `relay` (see [Smart Plug Control](#smart-plug-control))
    - Assign it a fixed IP address
    - Enter the IP in the HotCirc web UI after the first boot
 
-5. Compile and flash:
+4. Compile and flash:
    ```bash
    esphome run esphome-hotcirc_red.yaml             # Red variant
    esphome run esphome-hotcirc_m5stickc-plus2.yaml  # M5StickC variant
    esphome run esphome-hotcirc_uedx4646.yaml        # UEDX variant
    ```
+   No `secrets.yaml` is required.
 
-6. On first boot the device creates a WiFi access point named "ESPhome-HotCirc". Connect to it to configure WiFi credentials via the captive portal, or uncomment the `ssid`/`password` lines in the YAML file.
+5. On first boot the device creates a WiFi access point named "ESPhome-HotCirc". Connect to it and enter your WiFi credentials in the captive portal. The credentials are stored on the device.
 
-7. Optional: set up the Home Assistant heatmap card, see [Home Assistant Integration](#home-assistant-integration).
+   *Optional:* to build with fixed credentials instead, create a `secrets.yaml` with `wifi_ssid` and `wifi_password` and uncomment the `ssid`/`password` lines in the YAML file.
+
+6. Optional: set up the Home Assistant heatmap card, see [Home Assistant Integration](#home-assistant-integration).
 
 ---
 
@@ -680,7 +676,7 @@ esphome-hotcirc/
   esphome-hotcirc_red_ibom.html            # Interactive BOM for the Red PCB
   esphome-hotcirc_uedx4646.yaml            # UEDX4646 round display variant
   ESPHome_HotCirc_heatmap_ha_style.html    # Standalone learning matrix heatmap
-  secrets.yaml                             # WiFi credentials and paths (not committed)
+  secrets.yaml                             # Optional: fixed WiFi credentials (not committed)
   COPYING, LICENSE                         # License texts
   .gitignore
 ```
