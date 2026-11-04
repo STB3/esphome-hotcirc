@@ -8,9 +8,9 @@ Three hardware variants are supported, all sharing the same core component.
 
 - [Overview](#overview)
 - [Hardware Variants](#hardware-variants)
+  - [UEDX4646 (ESP32-S3)](#uedx4646-esp32-s3)
   - [Red (ESP32-C6)](#red-esp32-c6)
   - [M5StickC Plus2 (ESP32)](#m5stickc-plus2-esp32)
-  - [UEDX4646 (ESP32-S3)](#uedx4646-esp32-s3)
 - [How It Works](#how-it-works)
   - [Water Draw Detection](#water-draw-detection)
   - [Learning Matrix](#learning-matrix)
@@ -55,55 +55,15 @@ Key capabilities:
 
 ## Hardware Variants
 
-| | Red (ESP32-C6) | M5StickC Plus2 (ESP32) | UEDX4646 (ESP32-S3) |
+| | UEDX4646 (ESP32-S3) | Red (ESP32-C6) | M5StickC Plus2 (ESP32) |
 |---|---|---|---|
-| **MCU** | ESP32-C6, 4 MB flash | ESP32 | ESP32-S3, 16 MB flash, octal PSRAM |
-| **Pump control** | Direct GPIO relay (GPIO14) | Smart plug via HTTP | Smart plug via HTTP |
-| **Display** | None | 1.14" TFT 135x240 (ST7789V) | 1.5" round AMOLED 466x466 (CO5300, QSPI), LVGL GUI |
-| **Input** | Hardware button | Hardware button | Hardware button + touchscreen (CST816) + rotary encoder |
-| **Feedback** | 3 LEDs (green/yellow/WiFi) | TFT display | Round display with ECO arc, state colors and heatmap page |
-| **1-Wire** | GPIO21 (shared bus, addressed) | GPIO26 (shared bus, addressed) | GPIO39 outlet, GPIO40 return (one sensor per bus) |
-| **Button pin** | GPIO23 | GPIO37 | GPIO0 |
-
-### Red (ESP32-C6)
-
-This variant requires a special PCB that replaces the original one of the Vortex BWO155 pump. It
-controls the pump directly through a GPIO with no display. Three LEDs provide status feedback.
-It fits into the original housing of the BWO155 pump:
-
-- **Green LED** (GPIO2) - pump running
-- **Yellow LED** (GPIO3) - lights for 5 s on a confirmed water draw, steady on while learning is disabled, blinks three times after a matrix reset
-- **WiFi LED** (GPIO22) - blinks while disconnected, steady when connected
-
-Unique to this variant: an ADC input (GPIO1) reads the pump's internal NTC thermistor through a voltage divider (factor 0.45). The voltage is converted to a temperature with a Steinhart-Hart fit. This is a research feature for correlating the pump's built-in sensor with the external DS18B20, potentially replacing it in the future. The values are internal (not exposed to the web UI or Home Assistant) and are logged every 10 s under the `correlation` log tag.
-
-An interactive BOM for the PCB is included as `esphome-hotcirc_red_ibom.html`, the schematic as `pictures/hotcirc_red/Schematics_hotcirc_red.pdf`.
-
-![BWO155 pump installed](pictures/hotcirc_red/esphome_hotcirc_assembled_IV.png)
-
-![Custom PCB installed in pump housing](pictures/hotcirc_red/esphome_hotcirc_assembled_II.png)
-
-| PCB Top | PCB Bottom |
-|---|---|
-| ![PCB top side with ESP32-C6](pictures/hotcirc_red/esphome_hotcirc_TOP.png) | ![PCB bottom side with USB-C PD](pictures/hotcirc_red/esphome_hotcirc_BOT.png) |
-
-### M5StickC Plus2 (ESP32)
-
-Uses the M5StickC Plus2 form factor with a small 135x240 TFT display. The pump is controlled through a smart plug over HTTP rather than a direct relay, making it suitable for setups where the pump is physically distant from the controller.
-
-The display shows:
-
-- WiFi signal strength icon with 1-3 arcs (green = connected, red with strikethrough and "AP" = access point mode)
-- Pump status (RUNNING / STANDBY / DISABLED) and a pump symbol
-- Outlet temperature (orange) and return temperature (blue)
-- Smart plug IP address (green = reachable, red with strikethrough = unreachable)
-- Current trigger reason when the pump is running
-
-The display backlight (GPIO27, PWM) is exposed as the light entity "Display Backlight".
-
-![M5StickC Plus2 with DS18B20 sensors](pictures/hotcirc_m5stickc-plus/hotcirc_m5stickc-plus_cables.png)
-
-![M5StickC Plus2 display close-up](pictures/hotcirc_m5stickc-plus/hotcirc_m5stickc-plus_closeup.png)
+| **MCU** | ESP32-S3, 16 MB flash, octal PSRAM | ESP32-C6, 4 MB flash | ESP32 |
+| **Pump control** | Smart plug via HTTP | Direct GPIO relay (GPIO14) | Smart plug via HTTP |
+| **Display** | 1.5" round AMOLED 466x466 (CO5300, QSPI), LVGL GUI | None | 1.14" TFT 135x240 (ST7789V) |
+| **Input** | Hardware button + touchscreen (CST816) + rotary encoder | Hardware button | Hardware button |
+| **Feedback** | Round display with ECO arc, state colors and heatmap page | 3 LEDs (green/yellow/WiFi) | TFT display |
+| **1-Wire** | GPIO39 outlet, GPIO40 return (one sensor per bus) | GPIO21 (shared bus, addressed) | GPIO26 (shared bus, addressed) |
+| **Button pin** | GPIO0 | GPIO23 | GPIO37 |
 
 ### UEDX4646 (ESP32-S3)
 
@@ -196,6 +156,46 @@ The dark stage can be disabled with the switch "Display Dark Mode"; the display 
 > **▶ [Open the interactive display simulator](https://stb3.github.io/esphome-hotcirc/hotcirc_simulator.html)** &mdash; the same display, live in your browser: switch between operating states, drag the ECO level to reshape the arc, watch the pump animate, and tap the screen to open the learning matrix. No hardware required.
 
 > The simulator is a single self-contained HTML file ([`docs/hotcirc_simulator.html`](docs/hotcirc_simulator.html)) served via GitHub Pages.
+
+### Red (ESP32-C6)
+
+This variant requires a special PCB that replaces the original one of the Vortex BWO155 pump. It
+controls the pump directly through a GPIO with no display. Three LEDs provide status feedback.
+It fits into the original housing of the BWO155 pump:
+
+- **Green LED** (GPIO2) - pump running
+- **Yellow LED** (GPIO3) - lights for 5 s on a confirmed water draw, steady on while learning is disabled, blinks three times after a matrix reset
+- **WiFi LED** (GPIO22) - blinks while disconnected, steady when connected
+
+Unique to this variant: an ADC input (GPIO1) reads the pump's internal NTC thermistor through a voltage divider (factor 0.45). The voltage is converted to a temperature with a Steinhart-Hart fit. This is a research feature for correlating the pump's built-in sensor with the external DS18B20, potentially replacing it in the future. The values are internal (not exposed to the web UI or Home Assistant) and are logged every 10 s under the `correlation` log tag.
+
+An interactive BOM for the PCB is included as `esphome-hotcirc_red_ibom.html`, the schematic as `pictures/hotcirc_red/Schematics_hotcirc_red.pdf`.
+
+![BWO155 pump installed](pictures/hotcirc_red/esphome_hotcirc_assembled_IV.png)
+
+![Custom PCB installed in pump housing](pictures/hotcirc_red/esphome_hotcirc_assembled_II.png)
+
+| PCB Top | PCB Bottom |
+|---|---|
+| ![PCB top side with ESP32-C6](pictures/hotcirc_red/esphome_hotcirc_TOP.png) | ![PCB bottom side with USB-C PD](pictures/hotcirc_red/esphome_hotcirc_BOT.png) |
+
+### M5StickC Plus2 (ESP32)
+
+Uses the M5StickC Plus2 form factor with a small 135x240 TFT display. The pump is controlled through a smart plug over HTTP rather than a direct relay, making it suitable for setups where the pump is physically distant from the controller.
+
+The display shows:
+
+- WiFi signal strength icon with 1-3 arcs (green = connected, red with strikethrough and "AP" = access point mode)
+- Pump status (RUNNING / STANDBY / DISABLED) and a pump symbol
+- Outlet temperature (orange) and return temperature (blue)
+- Smart plug IP address (green = reachable, red with strikethrough = unreachable)
+- Current trigger reason when the pump is running
+
+The display backlight (GPIO27, PWM) is exposed as the light entity "Display Backlight".
+
+![M5StickC Plus2 with DS18B20 sensors](pictures/hotcirc_m5stickc-plus/hotcirc_m5stickc-plus_cables.png)
+
+![M5StickC Plus2 display close-up](pictures/hotcirc_m5stickc-plus/hotcirc_m5stickc-plus_closeup.png)
 
 ---
 
@@ -320,7 +320,7 @@ It runs on a fixed weekly schedule: **Sunday between 03:00 and 03:05**, once per
 
 ## Smart Plug Control
 
-The M5StickC Plus2 and UEDX4646 variants switch the pump through an ESPHome-based smart plug using the ESPHome web server REST API. The plug's relay switch must have the **name** `relay` (`name: "relay"`), because the web server addresses entities by their name, not by their `id:`:
+The UEDX4646 and M5StickC Plus2 variants switch the pump through an ESPHome-based smart plug using the ESPHome web server REST API. The plug's relay switch must have the **name** `relay` (`name: "relay"`), because the web server addresses entities by their name, not by their `id:`:
 
 | Request | Purpose |
 |---|---|
@@ -592,17 +592,17 @@ This applies to all three variants. The LED feedback is only available on the Re
 - A recent [ESPHome](https://esphome.io/) release (the configurations use `one_wire` + `dallas_temp`, `web_server` version 3, and on the UEDX variant `mipi_spi` and LVGL)
 - One of the three supported boards
 - Two DS18B20 temperature sensors
-- A Vortex BWO155 circulation pump with the special PCB (Red variant) or an ESPHome-based smart plug (M5StickC/UEDX variants, see [Recommended Smart Plug](#recommended-smart-plug-nous-a1t))
+- An ESPHome-based smart plug (UEDX/M5StickC variants, see [Recommended Smart Plug](#recommended-smart-plug-nous-a1t)) or a Vortex BWO155 circulation pump with the special PCB (Red variant)
 
 ### Steps
 
 1. Clone or download this repository.
 
 2. Configure the DS18B20 sensors:
-   - **Red / M5StickC:** both sensors share one bus. Replace the `address:` values with those of your sensors. The addresses of all devices found on the bus are listed in the ESPHome log at boot.
    - **UEDX:** each sensor has its own bus (GPIO39 outlet, GPIO40 return), no address needs to be configured.
+   - **Red / M5StickC:** both sensors share one bus. Replace the `address:` values with those of your sensors. The addresses of all devices found on the bus are listed in the ESPHome log at boot.
 
-3. For the M5StickC/UEDX variants, prepare the smart plug:
+3. For the UEDX/M5StickC variants, prepare the smart plug:
    - Flash the plug with ESPHome and enable `web_server`
    - Give its relay switch the name `relay` (see [Smart Plug Control](#smart-plug-control))
    - Assign it a fixed IP address
@@ -610,9 +610,9 @@ This applies to all three variants. The LED feedback is only available on the Re
 
 4. Compile and flash:
    ```bash
+   esphome run esphome-hotcirc_uedx4646.yaml        # UEDX variant
    esphome run esphome-hotcirc_red.yaml             # Red variant
    esphome run esphome-hotcirc_m5stickc-plus2.yaml  # M5StickC variant
-   esphome run esphome-hotcirc_uedx4646.yaml        # UEDX variant
    ```
    No `secrets.yaml` is required.
 
