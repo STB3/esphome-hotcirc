@@ -338,6 +338,21 @@ Robustness:
 - the plug is only reported offline after two consecutive failed checks
 - HTTP timeout is 1 s, to keep the controller responsive when the plug is slow or unreachable
 
+### Recommended Smart Plug: Nous A1T
+
+A well-supported, inexpensive option is the **Nous A1T** Wi-Fi smart plug (ESP8285, with power metering). It ships with Tasmota and can be converted to ESPHome **without opening it**, by uploading a ready-made firmware through the Tasmota web interface.
+
+Firmware, configuration and step-by-step flashing instructions are in [STB3/esphome-NousA1T](https://github.com/STB3/esphome-NousA1T).
+
+The firmware already matches the HotCirc requirements:
+
+- the relay switch is named `relay`
+- `web_server` (version 3) is enabled, so the REST endpoints above work out of the box
+
+After flashing, give the plug a fixed IP address in your router and enter it in the HotCirc web UI under "Smart Plug IP Address".
+
+> **Note:** The Nous A1T README suggests removing `web_server` if OTA updates fail due to lack of flash space. Do not do this when the plug is used with HotCirc: the controller switches the plug exclusively through the web server REST API.
+
 ---
 
 ## Learning Matrix Heatmap
