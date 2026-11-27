@@ -414,6 +414,46 @@ button:
     id: button_safe_mode
     name: Safe Mode Boot
 
+text:
+  # Write access for the matrix editor in ESPHome_HotCirc_heatmap_ha_style.html.
+  # Format: "<day>:<96 hex chars>" - day 0 = Mon ... 6 = Sun, followed by the
+  # 48 slot values (0-255) as two hex digits each. Only changes the matrix in
+  # RAM; the editor presses "Save Learning Matrix" afterwards to persist it.
+  - platform: template
+    name: "Learning Matrix Write"
+    id: learning_matrix_write
+    icon: "mdi:table-edit"
+    mode: text
+    min_length: 0
+    max_length: 100
+    entity_category: config
+    set_action:
+      - lambda: |-
+          if (x.size() != 98 || x[1] != ':' || x[0] < '0' || x[0] > '6') {
+            ESP_LOGW("matrix_write", "Invalid format (%u chars)", (unsigned) x.size());
+            return;
+          }
+          const int day = x[0] - '0';
+          auto hexv = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+          };
+          uint8_t row[48];
+          for (int s = 0; s < 48; s++) {
+            const int h = hexv(x[2 + 2 * s]);
+            const int l = hexv(x[3 + 2 * s]);
+            if (h < 0 || l < 0) {
+              ESP_LOGW("matrix_write", "Invalid hex digit in slot %d", s);
+              return;
+            }
+            row[s] = (uint8_t) ((h << 4) | l);
+          }
+          for (int s = 0; s < 48; s++) id(hotwater).learn_[day][s] = row[s];
+          ESP_LOGI("matrix_write", "Learning matrix row %d written", day);
+          id(learning_matrix_json).update();
+
 # FIX #8 (wie UEDX): restore_value: true bei allen Konfig-Slidern. Vorher
 # gingen alle Nutzer-Einstellungen bei jedem Reboot verloren (Reset auf
 # initial_value). on_value feuert auch beim Restore, damit landet der
