@@ -401,6 +401,21 @@ Below the heatmap, summary statistics are shown:
 - **Auto-refresh** - toggle automatic data refresh every 60 seconds
 - **Dark/Light theme** - switch between themes; preference is saved in local storage
 - **ECO level display** - the current ECO level is read from the device and shown alongside the heatmap
+- **Edit mode** - change the learning matrix by hand and write it back to the device (see below)
+
+### Editing the matrix
+
+Switch on **Edit mode** after loading the data to adjust the matrix manually, e.g. to pre-load fixed times on a new installation or to remove a pattern that no longer applies.
+
+- **Select cells:** drag to select a range, hold `Ctrl`/`⌘` to add to the selection, `Shift`-click to extend it. Clicking a day or a time selects the whole row or column. *All*, *Mon-Fri* and *Sat-Sun* select common blocks.
+- **Change values:** enter a value (0-255) and use *Set*, *Add*, *Subtract*, *Zero* or *= ECO level* (the slot just triggers the pump). Keyboard: `Enter` set, `+`/`-` add/subtract, `Del` zero, `Ctrl+Z` undo, `Esc` clear selection.
+- **Changed cells** are marked with a dot until they are written. The tooltip shows the previous value.
+- **Write to device** sends only the changed days and then presses *Save Learning Matrix*, so the matrix is persisted to flash. The page reloads the matrix afterwards and verifies the written values.
+- **Export/Import JSON** saves the matrix to a file and loads it again (same format as the `Learning Matrix JSON` sensor), e.g. as a backup before larger changes.
+
+Writing uses the `Learning Matrix Write` text entity, which is part of all three YAML files. Each request carries one day as `<day>:<96 hex digits>` (day `0` = Monday ... `6` = Sunday, two hex digits per 30-minute slot). Auto-refresh is paused while editing.
+
+> **Note:** Written values are not fixed: the daily decay (x 0.98) applies to them as well, and while learning is enabled new water draws are added on top. Disabling learning (long press on the button) stops the learning, but not the decay. To keep a manual schedule, re-apply it from time to time.
 
 ### How it works
 
@@ -558,6 +573,7 @@ All slider values are restored after a reboot (except Display Brightness on the 
 | Name | Description |
 |---|---|
 | Smart Plug IP Address | IP of the ESPHome smart plug (M5StickC/UEDX only, saved to flash) |
+| Learning Matrix Write | Writes one day of the learning matrix (`<day>:<96 hex digits>`), used by the heatmap editor. Changes RAM only; press *Save Learning Matrix* to persist |
 
 ### Button Actions
 

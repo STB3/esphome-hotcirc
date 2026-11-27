@@ -552,6 +552,125 @@
         .theme-icon {
             font-size: 18px;
         }
+
+        /* Info banner (success messages) */
+        .error-banner.info {
+            background: rgba(76, 175, 80, 0.1);
+            border-color: rgba(76, 175, 80, 0.3);
+            border-left-color: var(--color-success);
+            color: var(--color-success);
+        }
+
+        /* ===== Edit mode ===== */
+        .edit-card {
+            display: none;
+        }
+
+        body.editing .edit-card {
+            display: block;
+        }
+
+        .edit-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .edit-row + .edit-row {
+            margin-top: 12px;
+        }
+
+        .edit-row .control-label {
+            min-width: 64px;
+        }
+
+        .edit-sep {
+            width: 1px;
+            height: 28px;
+            background: var(--border-color);
+            margin: 0 6px;
+        }
+
+        .ha-button.small {
+            padding: 8px 14px;
+            font-size: 12px;
+        }
+
+        .ha-button:disabled {
+            opacity: 0.4;
+            cursor: default;
+            transform: none;
+        }
+
+        .ha-button.danger {
+            background: transparent;
+            border: 1px solid var(--color-error);
+            color: var(--color-error);
+        }
+
+        .edit-value {
+            width: 80px;
+            padding: 8px 10px;
+        }
+
+        .edit-range {
+            width: 200px;
+            accent-color: var(--accent-color);
+        }
+
+        .edit-hint {
+            margin-top: 12px;
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+        }
+
+        .edit-hint kbd {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            padding: 0 4px;
+            font-size: 11px;
+            font-family: inherit;
+        }
+
+        .heatmap.editing {
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+
+        .heatmap.editing .cell {
+            cursor: crosshair;
+        }
+
+        .heatmap.editing .cell:hover {
+            transform: none;
+            box-shadow: none;
+        }
+
+        .heatmap.editing .day-label,
+        .heatmap.editing .time-header {
+            cursor: pointer;
+        }
+
+        .heatmap.editing .day-label:hover,
+        .heatmap.editing .time-header:hover {
+            color: var(--accent-color);
+            border-color: var(--accent-color);
+        }
+
+        .cell.selected {
+            box-shadow: 0 0 0 2px var(--text-primary), 0 0 8px var(--shadow-strong);
+            filter: brightness(1.2);
+            z-index: 5;
+        }
+
+        /* Dot marks values changed in the editor but not yet written */
+        .cell.changed {
+            background-image: radial-gradient(circle at 30% 70%, #ffffff 0 2px, rgba(0, 0, 0, 0.6) 2.5px 3px, transparent 3.5px);
+        }
     </style>
 </head>
 <body>
@@ -598,6 +717,13 @@
                                 </span>
                                 <span>Auto-refresh</span>
                             </button>
+                            <button class="ha-button secondary" onclick="toggleEditMode(event)">
+                                <span class="ha-switch">
+                                    <input type="checkbox" id="editModeToggle" tabindex="-1" aria-hidden="true">
+                                    <span class="switch-slider"></span>
+                                </span>
+                                <span>Edit mode</span>
+                            </button>
                         </div>
                     </div>
                     
@@ -619,6 +745,55 @@
         
         <!-- Error Banner -->
         <div class="error-banner" id="errorMessage"></div>
+
+        <!-- Edit Card (visible in edit mode only) -->
+        <div class="ha-card edit-card" id="editCard">
+            <div class="card-header">
+                <h1>Edit Learning Matrix</h1>
+                <div class="status-chips">
+                    <div class="status-chip">Selected: <span id="editSelCount">0</span></div>
+                    <div class="status-chip">Changed: <span id="editChgCount">0</span></div>
+                </div>
+            </div>
+            <div class="card-content">
+                <div class="edit-row">
+                    <span class="control-label">Value</span>
+                    <input type="range" class="edit-range" id="editRange" min="0" max="255" step="1" value="120">
+                    <input type="number" class="ha-input edit-value" id="editValue" min="0" max="255" step="1" value="120">
+                    <button class="ha-button small" onclick="applyEdit('set')" title="Enter">Set</button>
+                    <button class="ha-button small secondary" onclick="applyEdit('add')" title="+">+ Add</button>
+                    <button class="ha-button small secondary" onclick="applyEdit('sub')" title="-">− Subtract</button>
+                    <button class="ha-button small secondary" onclick="applyEdit('zero')" title="Del">Zero</button>
+                    <button class="ha-button small secondary" onclick="applyEdit('eco')" title="Set to the current ECO level (slot just triggers the pump)">= ECO level</button>
+                </div>
+                <div class="edit-row">
+                    <span class="control-label">Select</span>
+                    <button class="ha-button small secondary" onclick="selectRect(0, 0, 6, 47, false)">All</button>
+                    <button class="ha-button small secondary" onclick="selectRect(0, 0, 4, 47, false)">Mon–Fri</button>
+                    <button class="ha-button small secondary" onclick="selectRect(5, 0, 6, 47, false)">Sat–Sun</button>
+                    <button class="ha-button small secondary" onclick="setSelection(new Set())">None</button>
+                    <div class="edit-sep"></div>
+                    <button class="ha-button small secondary" id="editUndoBtn" onclick="undoEdit()" title="Ctrl+Z">↶ Undo</button>
+                    <button class="ha-button small danger" onclick="discardEdits()">Discard changes</button>
+                </div>
+                <div class="edit-row">
+                    <span class="control-label">Device</span>
+                    <button class="ha-button small" id="editWriteBtn" onclick="writeToDevice()">💾 Write to device</button>
+                    <div class="edit-sep"></div>
+                    <button class="ha-button small secondary" onclick="exportMatrix()">⇩ Export JSON</button>
+                    <button class="ha-button small secondary" onclick="document.getElementById('importFile').click()">⇧ Import JSON</button>
+                    <input type="file" id="importFile" accept=".json,application/json" hidden>
+                </div>
+                <div class="edit-hint">
+                    Drag to select a range, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> adds to the selection, <kbd>Shift</kbd>-click extends it.
+                    Click a day or a time to select the whole row or column.
+                    <kbd>Enter</kbd> set · <kbd>+</kbd>/<kbd>−</kbd> add/subtract · <kbd>Del</kbd> zero · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Esc</kbd> clear selection.<br>
+                    Changed cells are marked with a dot. <em>Write to device</em> sends only the changed days and then presses
+                    <em>Save Learning Matrix</em>. Requires the <code>Learning Matrix Write</code> text entity in the firmware.
+                    Written values are not fixed: the daily decay applies to them, and new water draws are still learned while learning is enabled.
+                </div>
+            </div>
+        </div>
         
         <!-- Main Content Card -->
         <div class="ha-card">
@@ -672,26 +847,49 @@
             statusText.textContent = message;
         }
 
-        function showError(message) {
+        let messageTimer = null;
+
+        function showMessage(message, isError) {
             const errorDiv = document.getElementById('errorMessage');
-            errorDiv.textContent = '⚠ ' + message;
+            errorDiv.textContent = (isError ? '⚠ ' : '✓ ') + message;
+            errorDiv.classList.toggle('info', !isError);
             errorDiv.style.display = 'block';
-            setTimeout(() => {
+            clearTimeout(messageTimer);
+            messageTimer = setTimeout(() => {
                 errorDiv.style.display = 'none';
-            }, 5000);
+            }, isError ? 8000 : 5000);
         }
 
-        async function fetchData() {
+        function showError(message) {
+            showMessage(message, true);
+        }
+
+        function showInfo(message) {
+            showMessage(message, false);
+        }
+
+        function deviceBase() {
+            const ip = document.getElementById('espIP').value.trim().replace(/\/+$/, '');
+            return /^https?:\/\//.test(ip) ? ip : `http://${ip}`;
+        }
+
+        // Returns true when the matrix was loaded. force skips the unsaved-changes prompt.
+        async function fetchData(force = false) {
             const ip = document.getElementById('espIP').value;
             if (!ip) {
                 showError('Please enter ESP32 IP address');
-                return;
+                return false;
+            }
+
+            if (!force && editMode && isDirty() &&
+                !confirm('Reloading discards your unsaved matrix changes. Continue?')) {
+                return false;
             }
 
             setStatus('connecting', 'Connecting...');
 
             try {
-                const response = await fetch(`http://${ip}/text_sensor/Learning%20Matrix%20JSON`, {
+                const response = await fetch(`${deviceBase()}/text_sensor/Learning%20Matrix%20JSON`, {
                     method: 'GET',
                     headers: {
                         'Accept': 'application/json'
@@ -719,16 +917,19 @@
                 }
 
                 currentData = parsedData;
+                if (editMode) startEditSession();
                 renderHeatmap(parsedData);
                 
                 setStatus('connected', 'Connected');
                 document.getElementById('lastUpdate').textContent = 
                     `⏱ ${new Date().toLocaleTimeString()}`;
+                return true;
 
             } catch (error) {
                 console.error('Error fetching data:', error);
                 setStatus('error', 'Connection failed');
                 showError(`Failed to connect to ESP32: ${error.message}`);
+                return false;
             }
         }
 
@@ -778,38 +979,65 @@
             const corner = document.createElement('div');
             heatmap.appendChild(corner);
 
-            // Add time headers
-            times.forEach(time => {
+            // Add time headers (click selects the column in edit mode)
+            times.forEach((time, slot) => {
                 const header = document.createElement('div');
                 header.className = 'time-header';
                 header.textContent = time;
+                header.addEventListener('click', e => {
+                    if (editMode) selectRect(0, slot, 6, slot, e.ctrlKey || e.metaKey);
+                });
                 heatmap.appendChild(header);
             });
 
+            // In edit mode the working copy is shown instead of the device data
+            const view = editMode ? editView() : data;
+            cellEls = [];
+
             // Add data rows
-            data.days.forEach(dayData => {
+            view.days.forEach((dayData, day) => {
                 const dayLabel = document.createElement('div');
                 dayLabel.className = 'day-label';
                 dayLabel.textContent = dayData.name;
+                dayLabel.addEventListener('click', e => {
+                    if (editMode) selectRect(day, 0, day, 47, e.ctrlKey || e.metaKey);
+                });
                 heatmap.appendChild(dayLabel);
 
+                cellEls[day] = [];
                 dayData.values.forEach((value, index) => {
                     const cell = document.createElement('div');
                     cell.className = 'cell';
-                    
-                    // Mark cells that trigger the pump (value >= ECO level)
-                    if (value >= currentEcoLevel) {
-                        cell.classList.add('triggers-pump');
-                    }
-                    
-                    cell.style.background = getColor(value);
-                    const triggerStatus = value >= currentEcoLevel ? ' ⚡ TRIGGERS PUMP' : '';
-                    cell.setAttribute('data-value', `${times[index]} - ${dayData.name}: ${value}${triggerStatus}`);
+                    cell.dataset.day = day;
+                    cell.dataset.slot = index;
+                    cellEls[day][index] = cell;
                     heatmap.appendChild(cell);
+                    updateCell(day, index, value, dayData.name);
                 });
             });
 
-            renderStats(data);
+            if (editMode) {
+                heatmap.classList.add('editing');
+                attachEditHandlers(heatmap);
+            }
+
+            renderStats(view);
+            updateEditInfo();
+        }
+
+        function updateCell(day, slot, value, dayName) {
+            const cell = cellEls[day][slot];
+            const orig = editMode && origMatrix ? origMatrix[day][slot] : value;
+
+            // Mark cells that trigger the pump (value >= ECO level)
+            cell.classList.toggle('triggers-pump', value >= currentEcoLevel);
+            cell.classList.toggle('changed', editMode && orig !== value);
+            cell.classList.toggle('selected', editMode && selection.has(day * 48 + slot));
+
+            cell.style.backgroundColor = getColor(value);
+            const triggerStatus = value >= currentEcoLevel ? ' ⚡ TRIGGERS PUMP' : '';
+            const wasStatus = orig !== value ? ` (was ${orig})` : '';
+            cell.setAttribute('data-value', `${times[slot]} - ${dayName}: ${value}${wasStatus}${triggerStatus}`);
         }
 
         function renderStats(data) {
@@ -870,12 +1098,363 @@
             if (autoRefreshInterval) {
                 clearInterval(autoRefreshInterval);
                 autoRefreshInterval = null;
+            } else if (editMode) {
+                // A refresh would overwrite the working copy while editing
+                showError('Auto-refresh is not available in edit mode');
             } else {
                 autoRefreshInterval = setInterval(fetchData, 60000);
                 fetchData();
             }
             toggle.checked = !!autoRefreshInterval;
         }
+
+        // ===================================================================
+        //  Edit mode
+        //  The working copy (editMatrix) is edited locally. "Write to device"
+        //  sends every changed day to the "Learning Matrix Write" text entity
+        //  as "<day>:<96 hex chars>" and then presses "Save Learning Matrix".
+        // ===================================================================
+        const ENTITY_PATHS = {
+            write: ['/text/Learning%20Matrix%20Write/set', '/text/learning_matrix_write/set'],
+            save: ['/button/Save%20Learning%20Matrix/press', '/button/save_learning_matrix/press'],
+        };
+        const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+        let editMode = false;
+        let origMatrix = null;   // matrix as loaded from the device
+        let editMatrix = null;   // working copy
+        let selection = new Set(); // keys: day * 48 + slot
+        let undoStack = [];
+        let cellEls = [];
+        let dragState = null;
+        let selectAnchor = null;
+
+        const clampValue = v => Math.max(0, Math.min(255, Math.round(Number(v) || 0)));
+        const copyMatrix = m => m.map(row => row.slice());
+
+        function dayName(day) {
+            return (currentData && currentData.days[day] && currentData.days[day].name) || DAY_NAMES[day];
+        }
+
+        function editView() {
+            return { eco_level: currentEcoLevel, days: editMatrix.map((values, d) => ({ name: dayName(d), values })) };
+        }
+
+        function startEditSession() {
+            origMatrix = currentData.days.map(d => d.values.map(clampValue));
+            editMatrix = copyMatrix(origMatrix);
+            undoStack = [];
+        }
+
+        function isDirty() {
+            if (!origMatrix || !editMatrix) return false;
+            return editMatrix.some((row, d) => row.some((v, s) => v !== origMatrix[d][s]));
+        }
+
+        function toggleEditMode(e) {
+            if (e) e.preventDefault();
+            const toggle = document.getElementById('editModeToggle');
+
+            if (!editMode) {
+                if (!currentData) {
+                    showError('Load the learning matrix first (Refresh Data)');
+                    toggle.checked = false;
+                    return;
+                }
+                if (autoRefreshInterval) toggleAutoRefresh();
+                document.getElementById('errorMessage').style.display = 'none';
+                editMode = true;
+                selection = new Set();
+                startEditSession();
+            } else {
+                if (isDirty() && !confirm('Leave edit mode and discard your unsaved matrix changes?')) {
+                    toggle.checked = true;
+                    return;
+                }
+                editMode = false;
+                origMatrix = editMatrix = null;
+                selection = new Set();
+            }
+
+            toggle.checked = editMode;
+            document.body.classList.toggle('editing', editMode);
+            renderHeatmap(currentData);
+        }
+
+        function refreshCells(keys) {
+            keys.forEach(key => {
+                const d = Math.floor(key / 48), s = key % 48;
+                updateCell(d, s, editMatrix[d][s], dayName(d));
+            });
+        }
+
+        function refreshAll() {
+            for (let d = 0; d < 7; d++) {
+                for (let s = 0; s < 48; s++) updateCell(d, s, editMatrix[d][s], dayName(d));
+            }
+            renderStats(editView());
+            updateEditInfo();
+        }
+
+        function updateEditInfo() {
+            if (!editMode || !editMatrix) return;
+            let changed = 0;
+            editMatrix.forEach((row, d) => row.forEach((v, s) => { if (v !== origMatrix[d][s]) changed++; }));
+            document.getElementById('editSelCount').textContent = selection.size;
+            document.getElementById('editChgCount').textContent = changed;
+            document.getElementById('editWriteBtn').disabled = changed === 0;
+            document.getElementById('editUndoBtn').disabled = undoStack.length === 0;
+        }
+
+        // ---------- Selection ----------
+        function rectKeys(d0, s0, d1, s1) {
+            const keys = [];
+            for (let d = Math.min(d0, d1); d <= Math.max(d0, d1); d++) {
+                for (let s = Math.min(s0, s1); s <= Math.max(s0, s1); s++) keys.push(d * 48 + s);
+            }
+            return keys;
+        }
+
+        function setSelection(newSel) {
+            if (!editMode) return;
+            const touched = new Set([...selection, ...newSel]);
+            selection = newSel;
+            refreshCells(touched);
+            updateEditInfo();
+        }
+
+        function selectRect(d0, s0, d1, s1, add) {
+            if (!editMode) return;
+            const keys = rectKeys(d0, s0, d1, s1);
+            let newSel;
+            if (add) {
+                // Toggle: if the whole range is already selected, remove it
+                newSel = new Set(selection);
+                const allSelected = keys.every(k => newSel.has(k));
+                keys.forEach(k => allSelected ? newSel.delete(k) : newSel.add(k));
+            } else {
+                newSel = new Set(keys);
+            }
+            setSelection(newSel);
+        }
+
+        function cellAt(x, y) {
+            const el = document.elementFromPoint(x, y);
+            const cell = el && el.closest ? el.closest('.cell') : null;
+            return cell && cell.dataset.day !== undefined
+                ? { d: +cell.dataset.day, s: +cell.dataset.slot } : null;
+        }
+
+        function updateDrag(d, s) {
+            const newSel = new Set(dragState.base);
+            rectKeys(dragState.d0, dragState.s0, d, s).forEach(k => dragState.remove ? newSel.delete(k) : newSel.add(k));
+            setSelection(newSel);
+        }
+
+        function attachEditHandlers(heatmap) {
+            heatmap.addEventListener('pointerdown', e => {
+                const cell = e.target.closest('.cell');
+                if (!cell) return;
+                e.preventDefault();
+                const d = +cell.dataset.day, s = +cell.dataset.slot;
+                const add = e.ctrlKey || e.metaKey;
+
+                if (e.shiftKey && selectAnchor) {
+                    const newSel = add ? new Set(selection) : new Set();
+                    rectKeys(selectAnchor.d, selectAnchor.s, d, s).forEach(k => newSel.add(k));
+                    setSelection(newSel);
+                    return;
+                }
+
+                selectAnchor = { d, s };
+                dragState = {
+                    d0: d, s0: s,
+                    base: add ? new Set(selection) : new Set(),
+                    remove: add && selection.has(d * 48 + s),
+                };
+                updateDrag(d, s);
+                heatmap.setPointerCapture(e.pointerId);
+            });
+
+            heatmap.addEventListener('pointermove', e => {
+                if (!dragState) return;
+                const p = cellAt(e.clientX, e.clientY);
+                if (p) updateDrag(p.d, p.s);
+            });
+
+            const endDrag = () => { dragState = null; };
+            heatmap.addEventListener('pointerup', endDrag);
+            heatmap.addEventListener('pointercancel', endDrag);
+        }
+
+        // ---------- Editing ----------
+        function applyEdit(op) {
+            if (!editMode) return;
+            if (selection.size === 0) {
+                showError('No cells selected');
+                return;
+            }
+            const value = clampValue(document.getElementById('editValue').value);
+            const ops = {
+                set: () => value,
+                add: v => v + value,
+                sub: v => v - value,
+                zero: () => 0,
+                eco: () => currentEcoLevel,
+            };
+
+            undoStack.push(copyMatrix(editMatrix));
+            if (undoStack.length > 100) undoStack.shift();
+
+            selection.forEach(key => {
+                const d = Math.floor(key / 48), s = key % 48;
+                editMatrix[d][s] = clampValue(ops[op](editMatrix[d][s]));
+            });
+            refreshAll();
+        }
+
+        function undoEdit() {
+            if (!editMode || undoStack.length === 0) return;
+            editMatrix = undoStack.pop();
+            refreshAll();
+        }
+
+        function discardEdits() {
+            if (!editMode || !isDirty()) return;
+            undoStack.push(copyMatrix(editMatrix));
+            editMatrix = copyMatrix(origMatrix);
+            refreshAll();
+        }
+
+        // ---------- Device ----------
+        // Tries the name-based URL (current ESPHome web server) first and
+        // falls back to the object_id URL used by older ESPHome versions.
+        async function postEntity(paths, query) {
+            let lastError;
+            for (const path of paths) {
+                try {
+                    const response = await fetch(`${deviceBase()}${path}${query || ''}`, { method: 'POST' });
+                    if (response.ok) return;
+                    lastError = new Error(`HTTP ${response.status} (${path})`);
+                    if (response.status !== 404) break;
+                } catch (error) {
+                    lastError = error;
+                }
+            }
+            throw lastError;
+        }
+
+        async function writeToDevice() {
+            if (!editMode || !isDirty()) return;
+            const rows = [];
+            editMatrix.forEach((row, d) => { if (row.some((v, s) => v !== origMatrix[d][s])) rows.push(d); });
+            const written = copyMatrix(editMatrix);
+            const writeBtn = document.getElementById('editWriteBtn');
+            writeBtn.disabled = true;
+
+            try {
+                for (const d of rows) {
+                    setStatus('connecting', `Writing ${dayName(d)}...`);
+                    const hex = editMatrix[d].map(v => v.toString(16).padStart(2, '0')).join('');
+                    await postEntity(ENTITY_PATHS.write, '?value=' + encodeURIComponent(`${d}:${hex}`));
+                }
+                setStatus('connecting', 'Saving to flash...');
+                await postEntity(ENTITY_PATHS.save);
+            } catch (error) {
+                console.error('Error writing matrix:', error);
+                setStatus('error', 'Write failed');
+                showError(`Writing the matrix failed: ${error.message}. ` +
+                    'Does the firmware contain the "Learning Matrix Write" text entity?');
+                updateEditInfo();
+                return;
+            }
+
+            // Reload and verify (undo history is reset by the reload)
+            await new Promise(resolve => setTimeout(resolve, 500));
+            if (!(await fetchData(true))) {
+                showError('Matrix was written, but reloading it for verification failed');
+                return;
+            }
+
+            const mismatch = rows.filter(d => editMatrix && editMatrix[d].some((v, s) => v !== written[d][s]));
+            if (mismatch.length) {
+                showError(`Written, but ${mismatch.map(dayName).join(', ')} differs on the device ` +
+                    '(a water draw may have been learned in the meantime)');
+            } else {
+                showInfo(`Learning matrix written and saved (${rows.map(dayName).join(', ')})`);
+            }
+        }
+
+        // ---------- Import / Export ----------
+        function exportMatrix() {
+            const data = editMode ? editView() : currentData;
+            if (!data) {
+                showError('No data to export');
+                return;
+            }
+            const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `hotcirc_learning_matrix_${new Date().toISOString().slice(0, 10)}.json`;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+        }
+
+        document.getElementById('importFile').addEventListener('change', async e => {
+            const file = e.target.files[0];
+            e.target.value = '';
+            if (!file) return;
+            try {
+                const data = JSON.parse(await file.text());
+                if (!Array.isArray(data.days) || data.days.length !== 7 ||
+                    data.days.some(d => !Array.isArray(d.values) || d.values.length !== 48)) {
+                    throw new Error('expected 7 days with 48 values each');
+                }
+                if (!editMode) toggleEditMode();
+                if (!editMode) return;
+                undoStack.push(copyMatrix(editMatrix));
+                editMatrix = data.days.map(d => d.values.map(clampValue));
+                refreshAll();
+                showInfo(`Imported ${file.name} - click "Write to device" to apply it`);
+            } catch (error) {
+                showError(`Import failed: ${error.message}`);
+            }
+        });
+
+        // ---------- Value input + keyboard ----------
+        document.getElementById('editRange').addEventListener('input', e => {
+            document.getElementById('editValue').value = e.target.value;
+        });
+        document.getElementById('editValue').addEventListener('input', e => {
+            document.getElementById('editRange').value = clampValue(e.target.value);
+        });
+
+        document.addEventListener('keydown', e => {
+            if (!editMode) return;
+            const target = e.target;
+            if (target.tagName === 'INPUT' && (target.type === 'text' || target.type === 'number')) {
+                if (e.key === 'Enter' && target.id === 'editValue') {
+                    e.preventDefault();
+                    applyEdit('set');
+                }
+                return;
+            }
+            const mod = e.ctrlKey || e.metaKey;
+            if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); undoEdit(); }
+            else if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); selectRect(0, 0, 6, 47, false); }
+            else if (e.key === 'Enter') { e.preventDefault(); applyEdit('set'); }
+            else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); applyEdit('zero'); }
+            else if (e.key === '+') applyEdit('add');
+            else if (e.key === '-') applyEdit('sub');
+            else if (e.key === 'Escape') setSelection(new Set());
+        });
+
+        window.addEventListener('beforeunload', e => {
+            if (editMode && isDirty()) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
 
         // Load saved IP from localStorage
         window.addEventListener('DOMContentLoaded', () => {
